@@ -63,6 +63,40 @@ Describe 'toml_to_json.py' {
         (($output -join "`n") | ConvertFrom-Json).name | Should Be 'basic'
     }
 
+    It 'forces UTF-8 output for non-ASCII TOML despite the inherited Python encoding' {
+        $converter = Join-Path $projectRoot 'scripts\python\toml_to_json.py'
+        $unicodePath = Join-Path $TestDrive 'unicode.toml'
+        $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($unicodePath, 'name = "中文工具"', $utf8WithoutBom)
+
+        $python = (Get-Command python -ErrorAction Stop).Source
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $python
+        $startInfo.Arguments = ('"{0}" "{1}"' -f $converter, $unicodePath)
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.StandardOutputEncoding = $utf8WithoutBom
+        $startInfo.StandardErrorEncoding = $utf8WithoutBom
+        if ($null -ne $startInfo.Environment) {
+            $startInfo.Environment['PYTHONIOENCODING'] = 'cp1252'
+        }
+        else {
+            $startInfo.EnvironmentVariables['PYTHONIOENCODING'] = 'cp1252'
+        }
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $startInfo
+        $null = $process.Start()
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+
+        $process.ExitCode | Should Be 0
+        $stderr | Should Be ''
+        ($stdout | ConvertFrom-Json).name | Should Be '中文工具'
+    }
+
     It 'exits two for invalid TOML syntax' {
         $converter = Join-Path $projectRoot 'scripts\python\toml_to_json.py'
         $invalidPath = Join-Path $TestDrive 'invalid-cli.toml'

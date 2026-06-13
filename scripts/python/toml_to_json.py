@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import NoReturn
 
 
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
+
+
 def fail(message: str, exit_code: int) -> NoReturn:
     print(message, file=sys.stderr)
     raise SystemExit(exit_code)
