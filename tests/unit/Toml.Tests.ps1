@@ -2,6 +2,18 @@ $projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $tomlLibrary = Join-Path $projectRoot 'scripts\lib\Read-Toml.ps1'
 $fixtures = Join-Path $projectRoot 'tests\fixtures'
 
+function Get-ThrownMessage {
+    param([scriptblock]$Action)
+
+    try {
+        & $Action
+        return $null
+    }
+    catch {
+        return $_.Exception.Message
+    }
+}
+
 Describe 'Read-ProjectToml' {
     BeforeAll {
         . $tomlLibrary
@@ -18,38 +30,83 @@ Describe 'Read-ProjectToml' {
         $invalidPath = Join-Path $TestDrive 'invalid.toml'
         Set-Content -LiteralPath $invalidPath -Value 'broken = [' -Encoding UTF8
 
-        { Read-ProjectToml -Path $invalidPath } | Should Throw
+        $message = Get-ThrownMessage { Read-ProjectToml -Path $invalidPath }
+
+        $message | Should Match 'converter failed'
+        $message | Should Match 'exit code 2'
     }
 
     It 'rejects a missing file' {
-        { Read-ProjectToml -Path (Join-Path $TestDrive 'missing.toml') } | Should Throw
+        $message = Get-ThrownMessage {
+            Read-ProjectToml -Path (Join-Path $TestDrive 'missing.toml')
+        }
+
+        $message | Should Match 'does not exist'
     }
 
     It 'rejects a non-object TOML root from the converter' {
         $fakePython = Join-Path $TestDrive 'fake-python-non-object.cmd'
         Set-Content -LiteralPath $fakePython -Value '@echo [1,2,3]' -Encoding ASCII
 
-        { Read-ProjectToml -Path (Join-Path $fixtures 'config.valid.toml') -PythonCommand $fakePython -SkipPythonVersionCheck } | Should Throw
+        $message = Get-ThrownMessage {
+            Read-ProjectToml -Path (Join-Path $fixtures 'config.valid.toml') -PythonCommand $fakePython -SkipPythonVersionCheck
+        }
+
+        $message | Should Match 'not an object'
     }
 
     It 'rejects Python versions older than 3.11' {
         $fakePython = Join-Path $TestDrive 'fake-python-old.cmd'
         Set-Content -LiteralPath $fakePython -Value '@echo 3.10.9' -Encoding ASCII
 
-        { Read-ProjectToml -Path (Join-Path $fixtures 'config.valid.toml') -PythonCommand $fakePython } | Should Throw
+        $message = Get-ThrownMessage {
+            Read-ProjectToml -Path (Join-Path $fixtures 'config.valid.toml') -PythonCommand $fakePython
+        }
+
+        $message | Should Match '3.11'
     }
 
     It 'rejects an unavailable Python command' {
         $missingPython = Join-Path $TestDrive 'missing-python.exe'
 
-        { Read-ProjectToml -Path (Join-Path $fixtures 'config.valid.toml') -PythonCommand $missingPython } | Should Throw
+        $message = Get-ThrownMessage {
+            Read-ProjectToml -Path (Join-Path $fixtures 'config.valid.toml') -PythonCommand $missingPython
+        }
+
+        $message | Should Match 'unavailable'
     }
 
     It 'reports converter subprocess failures' {
         $fakePython = Join-Path $TestDrive 'fake-python-failure.cmd'
         Set-Content -LiteralPath $fakePython -Value '@exit /b 3' -Encoding ASCII
 
-        { Read-ProjectToml -Path (Join-Path $fixtures 'config.valid.toml') -PythonCommand $fakePython -SkipPythonVersionCheck } | Should Throw
+        $message = Get-ThrownMessage {
+            Read-ProjectToml -Path (Join-Path $fixtures 'config.valid.toml') -PythonCommand $fakePython -SkipPythonVersionCheck
+        }
+
+        $message | Should Match 'exit code 3'
+    }
+
+    It 'preserves UTF-8 TOML text when the console uses CP437' {
+        $unicodePath = Join-Path $TestDrive 'bridge-unicode.toml'
+        $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+        $expected = ([char]0x4E2D).ToString() + [char]0x6587 + [char]0x5DE5 + [char]0x5177
+        [System.IO.File]::WriteAllText(
+            $unicodePath,
+            ('name = "{0}"' -f $expected),
+            $utf8WithoutBom
+        )
+        $originalEncoding = [Console]::OutputEncoding
+
+        try {
+            [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(437)
+            $document = Read-ProjectToml -Path $unicodePath
+        }
+        finally {
+            [Console]::OutputEncoding = $originalEncoding
+        }
+
+        $document.name | Should Be $expected
     }
 }
 
@@ -105,5 +162,16 @@ Describe 'toml_to_json.py' {
         $null = @(& python $converter $invalidPath 2>&1)
 
         $LASTEXITCODE | Should Be 2
+    }
+
+    It 'exits two for invalid UTF-8 input' {
+        $converter = Join-Path $projectRoot 'scripts\python\toml_to_json.py'
+        $invalidPath = Join-Path $TestDrive 'invalid-utf8.toml'
+        [System.IO.File]::WriteAllBytes($invalidPath, [byte[]](0xFF, 0xFE, 0xFD))
+
+        $output = @(& python $converter $invalidPath 2>&1)
+
+        $LASTEXITCODE | Should Be 2
+        ($output -join "`n") | Should Match 'input error'
     }
 }

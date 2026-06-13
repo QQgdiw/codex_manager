@@ -36,6 +36,8 @@ def main(argv: list[str]) -> int:
             document = tomllib.load(stream)
     except (FileNotFoundError, IsADirectoryError, PermissionError) as exc:
         fail(f"input error: {exc}", 2)
+    except UnicodeDecodeError as exc:
+        fail(f"input error: TOML must be valid UTF-8: {exc}", 2)
     except tomllib.TOMLDecodeError as exc:
         fail(f"TOML syntax error: {exc}", 2)
     except OSError as exc:

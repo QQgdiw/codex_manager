@@ -9,6 +9,97 @@ function Test-ProjectObject {
         $Value -is [System.Management.Automation.PSCustomObject])
 }
 
+function Get-ProjectMember {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$InputObject,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        foreach ($key in $InputObject.Keys) {
+            if ("$key" -ieq $Name) {
+                return [pscustomobject]@{
+                    Exists = $true
+                    Value = $InputObject[$key]
+                }
+            }
+        }
+    }
+    else {
+        $property = $InputObject.PSObject.Properties[$Name]
+        if ($null -ne $property) {
+            return [pscustomobject]@{
+                Exists = $true
+                Value = $property.Value
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        Exists = $false
+        Value = $null
+    }
+}
+
+function ConvertTo-ProcessArgument {
+    param([AllowEmptyString()][string]$Value)
+
+    return '"' + ($Value -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"'
+}
+
+function Invoke-Utf8Process {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [string[]]$ArgumentList = @()
+    )
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $extension = [System.IO.Path]::GetExtension($FilePath)
+    $quotedArguments = @($ArgumentList | ForEach-Object { ConvertTo-ProcessArgument "$_" })
+
+    if ($extension -ieq '.cmd' -or $extension -ieq '.bat') {
+        $startInfo.FileName = $env:ComSpec
+        $command = @((ConvertTo-ProcessArgument $FilePath)) + $quotedArguments
+        $startInfo.Arguments = '/d /s /c "' + ($command -join ' ') + '"'
+    }
+    else {
+        $startInfo.FileName = $FilePath
+        $startInfo.Arguments = $quotedArguments -join ' '
+    }
+
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.StandardOutputEncoding = $utf8WithoutBom
+    $startInfo.StandardErrorEncoding = $utf8WithoutBom
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+
+    try {
+        $null = $process.Start()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut = $stdoutTask.Result
+            StdErr = $stderrTask.Result
+        }
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
 function Read-ProjectToml {
     [CmdletBinding()]
     param(
@@ -33,15 +124,15 @@ function Read-ProjectToml {
     }
 
     if (-not $SkipPythonVersionCheck) {
-        $versionOutput = @(
-            & $python.Source -c 'import sys; print(sys.version_info.major,sys.version_info.minor,sys.version_info.micro,sep=chr(46))' 2>&1
+        $versionResult = Invoke-Utf8Process -FilePath $python.Source -ArgumentList @(
+            '-c',
+            'import sys; print(sys.version_info.major,sys.version_info.minor,sys.version_info.micro,sep=chr(46))'
         )
-        $versionExitCode = $LASTEXITCODE
-        $versionText = ($versionOutput | ForEach-Object { "$_" }) -join "`n"
+        $versionText = $versionResult.StdOut.Trim()
         $parsedVersion = $null
 
-        if ($versionExitCode -ne 0 -or
-            -not [version]::TryParse($versionText.Trim(), [ref]$parsedVersion)) {
+        if ($versionResult.ExitCode -ne 0 -or
+            -not [version]::TryParse($versionText, [ref]$parsedVersion)) {
             throw "Unable to determine Python version using '$PythonCommand'."
         }
         if ($parsedVersion -lt [version]'3.11') {
@@ -54,12 +145,18 @@ function Read-ProjectToml {
         throw "TOML converter is missing: $converterPath"
     }
 
-    $converterOutput = @(& $python.Source $converterPath $Path 2>&1)
-    $converterExitCode = $LASTEXITCODE
-    $jsonText = ($converterOutput | ForEach-Object { "$_" }) -join "`n"
+    $converterResult = Invoke-Utf8Process -FilePath $python.Source -ArgumentList @(
+        $converterPath,
+        $Path
+    )
+    $jsonText = $converterResult.StdOut
 
-    if ($converterExitCode -ne 0) {
-        throw "TOML converter failed with exit code ${converterExitCode}: $jsonText"
+    if ($converterResult.ExitCode -ne 0) {
+        $detail = $converterResult.StdErr.Trim()
+        if ([string]::IsNullOrWhiteSpace($detail)) {
+            $detail = $jsonText.Trim()
+        }
+        throw "TOML converter failed with exit code $($converterResult.ExitCode): $detail"
     }
 
     try {
@@ -90,25 +187,37 @@ function Test-WhitelistDocument {
 
     $errors = New-Object System.Collections.Generic.List[string]
     $warnings = New-Object System.Collections.Generic.List[string]
-    $toolsProperty = $Document.PSObject.Properties['tools']
+    $schemaMember = Get-ProjectMember -InputObject $Document -Name 'schema_version'
+    if (-not $schemaMember.Exists) {
+        $errors.Add("Document is missing required field 'schema_version'.")
+    }
+    elseif ($schemaMember.Value -isnot [string] -or
+        [string]::IsNullOrWhiteSpace($schemaMember.Value)) {
+        $errors.Add("Document field 'schema_version' must be a non-empty string.")
+    }
+    elseif ($schemaMember.Value -cne '1.0') {
+        $errors.Add("Document field 'schema_version' must be supported version '1.0'.")
+    }
 
-    if ($null -eq $toolsProperty -or $null -eq $toolsProperty.Value) {
+    $toolsMember = Get-ProjectMember -InputObject $Document -Name 'tools'
+
+    if (-not $toolsMember.Exists -or $null -eq $toolsMember.Value) {
         $errors.Add("Document is missing required 'tools' collection.")
         $tools = @()
     }
-    elseif ($toolsProperty.Value -is [string] -or
-        -not ($toolsProperty.Value -is [System.Collections.IEnumerable])) {
-        $errors.Add("Document 'tools' value must be a collection.")
+    elseif ($toolsMember.Value -isnot [System.Array]) {
+        $errors.Add("Document 'tools' value must be an array.")
         $tools = @()
     }
     else {
-        $tools = @($toolsProperty.Value)
+        $tools = @($toolsMember.Value)
     }
 
-    $requiredFields = @(
-        'id', 'name', 'type', 'source', 'version', 'sha256', 'license',
-        'approval', 'risk', 'install_target', 'credential_refs', 'conflicts'
+    $stringFields = @(
+        'id', 'name', 'type', 'source', 'version', 'sha256',
+        'license', 'approval', 'risk', 'install_target'
     )
+    $arrayFields = @('credential_refs', 'conflicts')
     $allowedTypes = @('plugin', 'mcp', 'skill')
     $allowedApprovals = @('proposed', 'approved', 'rejected', 'suspended')
     $seenIds = @{}
@@ -122,19 +231,47 @@ function Test-WhitelistDocument {
             continue
         }
 
-        foreach ($field in $requiredFields) {
-            if ($null -eq $tool.PSObject.Properties[$field]) {
+        $members = @{}
+        foreach ($field in $stringFields + $arrayFields) {
+            $members[$field] = Get-ProjectMember -InputObject $tool -Name $field
+            if (-not $members[$field].Exists) {
                 $errors.Add("$label is missing required field '$field'.")
             }
         }
 
-        $idProperty = $tool.PSObject.Properties['id']
-        if ($null -ne $idProperty) {
-            $id = "$($idProperty.Value)"
-            if ([string]::IsNullOrWhiteSpace($id)) {
-                $errors.Add("$label field 'id' must be non-empty.")
+        foreach ($field in $stringFields) {
+            $member = $members[$field]
+            if ($member.Exists -and
+                ($member.Value -isnot [string] -or
+                    [string]::IsNullOrWhiteSpace($member.Value))) {
+                $errors.Add("$label field '$field' must be a non-empty string.")
             }
-            elseif ($seenIds.ContainsKey($id)) {
+        }
+
+        foreach ($field in $arrayFields) {
+            $member = $members[$field]
+            if (-not $member.Exists) {
+                continue
+            }
+            if ($member.Value -isnot [System.Array]) {
+                $errors.Add("$label field '$field' must be an array.")
+                continue
+            }
+            for ($itemIndex = 0; $itemIndex -lt $member.Value.Count; $itemIndex++) {
+                $item = $member.Value[$itemIndex]
+                if ($item -isnot [string] -or [string]::IsNullOrWhiteSpace($item)) {
+                    $errors.Add(
+                        "$label field '$field[$itemIndex]' must be a non-empty string."
+                    )
+                }
+            }
+        }
+
+        $idMember = $members['id']
+        if ($idMember.Exists -and $idMember.Value -is [string] -and
+            -not [string]::IsNullOrWhiteSpace($idMember.Value)) {
+            $id = $idMember.Value
+            if ($seenIds.ContainsKey($id)) {
                 $errors.Add("$label has duplicate id '$id'.")
             }
             else {
@@ -142,19 +279,24 @@ function Test-WhitelistDocument {
             }
         }
 
-        $typeProperty = $tool.PSObject.Properties['type']
-        if ($null -ne $typeProperty -and $allowedTypes -notcontains "$($typeProperty.Value)") {
+        $typeMember = $members['type']
+        if ($typeMember.Exists -and $typeMember.Value -is [string] -and
+            -not [string]::IsNullOrWhiteSpace($typeMember.Value) -and
+            $allowedTypes -notcontains $typeMember.Value) {
             $errors.Add("$label field 'type' must be plugin, mcp, or skill.")
         }
 
-        $approvalProperty = $tool.PSObject.Properties['approval']
-        if ($null -ne $approvalProperty -and
-            $allowedApprovals -notcontains "$($approvalProperty.Value)") {
+        $approvalMember = $members['approval']
+        if ($approvalMember.Exists -and $approvalMember.Value -is [string] -and
+            -not [string]::IsNullOrWhiteSpace($approvalMember.Value) -and
+            $allowedApprovals -notcontains $approvalMember.Value) {
             $errors.Add("$label field 'approval' has an invalid value.")
         }
 
-        $hashProperty = $tool.PSObject.Properties['sha256']
-        if ($null -ne $hashProperty -and "$($hashProperty.Value)" -cnotmatch '^[0-9a-f]{64}$') {
+        $hashMember = $members['sha256']
+        if ($hashMember.Exists -and $hashMember.Value -is [string] -and
+            -not [string]::IsNullOrWhiteSpace($hashMember.Value) -and
+            $hashMember.Value -cnotmatch '^[0-9a-f]{64}$') {
             $errors.Add("$label field 'sha256' must be 64 lowercase hexadecimal characters.")
         }
     }
