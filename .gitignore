@@ -1,0 +1,10 @@
+# Isolated implementation worktrees
+.worktrees/
+
+# Authentication and local secrets
+auth.json
+.codex/auth.json
+.secrets/
+*.credential
+*.dpapi
+

@@ -40,16 +40,18 @@
 - 根目录 `config.toml` 不是当前 Codex CLI 自动识别的项目配置位置，不能视为已经生效。
 - `MCP/servers` 和 `Skills/AgentSkillsforContextEngineering` 已有源码，但它们是嵌套 Git 仓库，且未在当前 Codex 配置中启用。
 - Puppeteer MCP 的预期 `dist/index.js` 不存在，不能标记为可用。
-- Codex CLI 当前未登录，`codex doctor` 同时报告部分服务端点不可达。
+- 沙箱内 `codex login status` 因运行账户隔离显示未登录；沙箱外检查已确认用户级 `C:\Users\86178\.codex\auth.json` 可用，状态为 `Logged in using ChatGPT`。
+- `codex doctor` 在沙箱内报告部分服务端点不可达，真实验证应在获得网络权限后于沙箱外复核。
 - `gh` CLI 未安装，但 Git 和网页/GitHub API 能力足以完成首期，不将其列为依赖。
+- `MCP/servers` 与 `Skills/AgentSkillsforContextEngineering` 作为首批待纳管对象处理，必须和后续新增项目一样进入市场文档、白名单审批、固定版本、部署状态和分层验证流程。
 
 ### 2.3 后续授权门槛
 
 以下操作必须在执行时单独申请或由用户介入：
 
-1. Codex 交互登录：由用户执行 `codex login`，不得由自动化脚本代填凭据。
+1. Codex 认证：复用用户级 `C:\Users\86178\.codex\auth.json`，不得复制到仓库、读取正文或写入日志；若未来失效，再由用户执行 `codex login`。
 2. 用户级 Plugin 安装：写入用户 Codex 配置和缓存时申请工作区外写权限。
-3. 联网下载：Git、npm、uv、pip 或其他安装器访问外部网络时申请联网权限。
+3. 联网下载：用户已同意自动执行。由于当前环境按命令前缀控制网络，首次出现 `git clone/fetch`、`npm install`、`uv sync`、`pip install`、`codex plugin marketplace add` 等命令时申请一次，并建议保存对应前缀规则。
 4. 系统级依赖：需要管理员权限、驱动、系统服务或全局环境变量时先展示变更清单并申请。
 5. Git 推送：本地提交完成后，只有在用户要求同步远程时执行 `git push`。
 
@@ -127,6 +129,7 @@ state/
 - `VerificationEngine.ps1`：静态、加载/启动、最小功能调用三级验证。
 - `adapters/*`：只封装具体工具类型的安装、卸载和验证命令。
 - `tests/fixtures/*`：固定测试输入，不包含真实凭据或外部下载。
+- 用户级 `C:\Users\86178\.codex\auth.json`：Codex 自身认证文件，不属于项目交付物，不复制、不解析、不提交。
 
 ## 4. 执行阶段
 
@@ -770,7 +773,9 @@ git commit -m "docs[market]: add 2026 GitHub trend history"
 - [ ] **Step 4: 筛选其他 AI 工作流辅助工具**
 - [ ] **Step 5: 排除模型训练和基础模型开发项目**
 - [ ] **Step 6: 为建议项生成 `proposed` 白名单条目**
-- [ ] **Step 7: 提交**
+- [ ] **Step 7: 将现有 `MCP/servers` 与 `Skills/AgentSkillsforContextEngineering` 按相同规则建立来源、版本、许可证、风险和 `proposed` 条目**
+- [ ] **Step 8: 对现有对象逐项区分“源码存在”“可部署”“已配置”“已静态验证”“已动态验证”**
+- [ ] **Step 9: 提交**
 
 派生文档随 `github_market.md` 的按需更新同步增量维护，不独立定时抓取。
 
@@ -858,8 +863,8 @@ git commit -m "chore[whitelist]: record approved tool baseline"
 - Modify: `state/LOG.md`
 - Modify: `state/TODO.md`
 
-- [ ] **Step 1: 用户完成 `codex login`**
-- [ ] **Step 2: 执行 `codex doctor` 并保存不含敏感信息的摘要**
+- [ ] **Step 1: 在沙箱外执行 `codex login status`，确认用户级 `auth.json` 可用，不读取文件正文**
+- [ ] **Step 2: 在已授权网络环境执行 `codex doctor` 并保存不含敏感信息的摘要**
 - [ ] **Step 3: 对首个批准工具执行 Dry Run**
 - [ ] **Step 4: 展示工作区外写入、联网和系统依赖请求**
 - [ ] **Step 5: 获得授权后执行单项部署**
@@ -976,7 +981,7 @@ git commit -m "docs[state]: close first delivery milestone"
 
 | 风险 | 影响 | 应对 |
 |---|---|---|
-| Codex CLI 未登录或服务端点不可达 | 无法完成真实加载验证 | 实现阶段先完成离线测试；真实验证前由用户登录并检查网络 |
+| 沙箱账户无法使用用户级认证或服务端点不可达 | 无法完成真实加载验证 | 认证和动态调用在沙箱外执行；复用用户级 `auth.json`，只检查状态，不读取正文 |
 | Codex 配置格式随版本变化 | 配置生成失效 | 用当前 CLI 帮助和实际命令验证；固定最低版本并在执行时记录版本 |
 | PowerShell 5.1 无 TOML 解析器 | 清单无法可靠读取 | 使用当前 Python 3.14 的标准库 `tomllib`，不引入第三方解析依赖 |
 | GitHub 历史周榜不完整 | 历史数据无法精确还原 | 可验证来源优先，近似数据明确标注推导方法和可信度 |
@@ -998,3 +1003,11 @@ git commit -m "docs[state]: close first delivery milestone"
 7. `Notes/verify_record.md` 无敏感信息。
 8. `state` 文件反映真实进度、风险和残留。
 9. Git 提交结构清晰，工作区没有未说明的实现改动。
+
+## 10. 认证文件使用边界
+
+- Codex 自身认证使用 `C:\Users\86178\.codex\auth.json`。
+- 项目不复制、备份、解析或展示该文件内容。
+- 项目根 `.gitignore` 必须忽略 `auth.json`、`.codex/auth.json`、`.secrets/`、`*.credential` 和 `*.dpapi`。
+- 认证验证只使用 `codex login status`、`codex doctor --json` 的脱敏结果，以及实际 Plugin/MCP 最小调用结果。
+- `auth.json` 只用于 Codex 服务认证；第三方工具的 API Key 或 Token 仍由项目 DPAPI 凭据库单独管理。

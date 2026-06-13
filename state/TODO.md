@@ -11,6 +11,8 @@
 - [x] 编写 `Resources/PRD.md`。
 - [x] 审计现有 Plugins、MCP、Skills、运行时和权限。
 - [x] 编写 `Resources/PP.md`。
+- [x] 验证用户级 Codex `auth.json` 可用于沙箱外认证。
+- [x] 确认现有 MCP 和 Skills 纳入统一管理与验证。
 - [x] 建立项目状态文件。
 
 ## 下一阶段

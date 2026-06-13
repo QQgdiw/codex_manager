@@ -27,5 +27,9 @@
 - 项目根目录 `config.toml` 不能视为当前 Codex CLI 已加载配置。
 - 当前会话自带 Superpowers、浏览器、文件和文档能力，足以完成首期开发，不需要立即安装额外扩展。
 - 本地 MCP 源码存在，但 Puppeteer 预期构建文件缺失；所有 MCP 均尚未在 Codex 中启用和验证。
-- Codex CLI 未登录，且 Doctor 报告部分服务端点不可达。真实加载验证前需要用户登录，并可能需要网络策略配合。
+- 沙箱内 `codex login status` 显示未登录，但沙箱外返回 `Logged in using ChatGPT`，说明用户级 `C:\Users\86178\.codex\auth.json` 可用，差异来自运行账户隔离。
+- 禁止读取、输出或提交 `auth.json` 正文。认证验证只使用状态命令和脱敏诊断结果。
+- Doctor 在沙箱内报告部分服务端点不可达，真实加载验证应在沙箱外和已授权网络环境复核。
 - 工作区内读写权限已验证。工作区外用户 Codex 目录、联网下载、系统级安装和管理员操作需要按次申请。
+- 用户已同意联网下载自动执行；首次遇到具体联网命令时应申请可复用的命令前缀授权。
+- 现有 `MCP/servers` 与 `Skills/AgentSkillsforContextEngineering` 必须作为首批管理对象，和后续白名单项目一样完成来源、版本、审批、部署和分层验证。

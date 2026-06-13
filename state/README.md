@@ -40,4 +40,6 @@
 - 当前会话具备完成首期所需的检索、浏览器、文件、PowerShell、测试和 Git 能力，无需立即安装额外扩展。
 - Codex CLI 当前未配置 marketplace plugin 和 MCP。
 - 根目录 `config.toml` 当前不能视为 Codex 已加载配置。
-- 真实部署验证前需要用户完成 Codex 登录，并按操作批准联网、用户目录写入或系统级变更。
+- 用户级 Codex `auth.json` 已在沙箱外验证可用；认证检查不读取文件正文。
+- 现有 `MCP/servers` 和 `Skills/AgentSkillsforContextEngineering` 将作为首批管理对象，按新项目相同规则进入白名单和验证流程。
+- 联网下载可自动执行；首次按命令前缀申请并保存授权规则。用户目录写入或系统级变更仍需明确授权。
