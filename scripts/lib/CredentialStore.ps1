@@ -1,7 +1,7 @@
 $script:DefaultCredentialStorePath = Join-Path (
     Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 ) '.secrets\credentials.dpapi'
-$script:CredentialStoreSchemaVersion = 1
+$script:CredentialStoreSchemaVersion = '1'
 
 if (-not ('Security.Cryptography.ProtectedData' -as [type])) {
     Add-Type -AssemblyName System.Security
@@ -47,23 +47,117 @@ function Resolve-CredentialStorePath {
     return [IO.Path]::GetFullPath($StorePath)
 }
 
-function Get-CredentialStoreMutexName {
+function Protect-CredentialStoreDirectory {
     param(
         [Parameter(Mandatory = $true)]
         [string]$StorePath
     )
 
-    $bytes = [Text.Encoding]::UTF8.GetBytes($StorePath.ToUpperInvariant())
-    $sha256 = [Security.Cryptography.SHA256]::Create()
     try {
-        $hash = $sha256.ComputeHash($bytes)
-        return 'Local\CodexCredentialStore-' + (
-            ($hash | ForEach-Object { $_.ToString('x2') }) -join ''
+        $directory = Split-Path -Parent $StorePath
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+            New-Item -ItemType Directory -Path $directory -Force `
+                -ErrorAction Stop | Out-Null
+        }
+
+        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $systemSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
+        $inheritance = (
+            [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+            [Security.AccessControl.InheritanceFlags]::ObjectInherit
         )
+        $security = [IO.Directory]::GetAccessControl(
+            $directory,
+            [Security.AccessControl.AccessControlSections]::Access
+        )
+        $security.SetAccessRuleProtection($true, $false)
+        $existingRules = @($security.GetAccessRules(
+            $true,
+            $false,
+            [Security.Principal.SecurityIdentifier]
+        ))
+        foreach ($existingSid in @(
+            $existingRules |
+                ForEach-Object { $_.IdentityReference.Value } |
+                Select-Object -Unique
+        )) {
+            $security.PurgeAccessRules(
+                (New-Object Security.Principal.SecurityIdentifier($existingSid))
+            )
+        }
+        foreach ($sid in @($currentSid, $systemSid)) {
+            $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+                $sid,
+                [Security.AccessControl.FileSystemRights]::FullControl,
+                $inheritance,
+                [Security.AccessControl.PropagationFlags]::None,
+                [Security.AccessControl.AccessControlType]::Allow
+            )
+            $security.AddAccessRule($rule)
+        }
+        [IO.Directory]::SetAccessControl($directory, $security)
+
+        $verified = [IO.Directory]::GetAccessControl(
+            $directory,
+            [Security.AccessControl.AccessControlSections]::Access
+        )
+        if (-not $verified.AreAccessRulesProtected) {
+            throw 'invalid'
+        }
+        $rules = @($verified.GetAccessRules(
+            $true,
+            $true,
+            [Security.Principal.SecurityIdentifier]
+        ))
+        if ($rules.Count -ne 2) {
+            throw 'invalid'
+        }
+        foreach ($sid in @($currentSid, $systemSid)) {
+            $matchingRules = @($rules | Where-Object {
+                $_.IdentityReference -eq $sid -and
+                $_.AccessControlType -eq (
+                    [Security.AccessControl.AccessControlType]::Allow
+                ) -and
+                $_.FileSystemRights -eq (
+                    [Security.AccessControl.FileSystemRights]::FullControl
+                ) -and
+                $_.InheritanceFlags -eq $inheritance -and
+                $_.PropagationFlags -eq (
+                    [Security.AccessControl.PropagationFlags]::None
+                ) -and
+                -not $_.IsInherited
+            })
+            if ($matchingRules.Count -ne 1) {
+                throw 'invalid'
+            }
+        }
     }
-    finally {
-        [Array]::Clear($bytes, 0, $bytes.Length)
-        $sha256.Dispose()
+    catch {
+        throw 'Credential store directory permissions could not be secured.'
+    }
+}
+
+function Initialize-CredentialStoreDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$StorePath
+    )
+
+    try {
+        $directory = Split-Path -Parent $StorePath
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+            if (Test-Path -LiteralPath $directory) {
+                throw 'invalid'
+            }
+            New-Item -ItemType Directory -Path $directory -Force `
+                -ErrorAction Stop | Out-Null
+        }
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+            throw 'invalid'
+        }
+    }
+    catch {
+        throw 'Credential store directory permissions could not be secured.'
     }
 }
 
@@ -76,30 +170,38 @@ function Invoke-WithCredentialStoreLock {
         [scriptblock]$Action
     )
 
-    $mutex = New-Object Threading.Mutex(
-        $false,
-        (Get-CredentialStoreMutexName -StorePath $StorePath)
-    )
-    $acquired = $false
+    Initialize-CredentialStoreDirectory -StorePath $StorePath
+    $lockPath = $StorePath + '.lock'
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    $lockStream = $null
     try {
-        try {
-            $acquired = $mutex.WaitOne([TimeSpan]::FromSeconds(30))
-        }
-        catch [Threading.AbandonedMutexException] {
-            $acquired = $true
+        while ($null -eq $lockStream) {
+            try {
+                $lockStream = [IO.File]::Open(
+                    $lockPath,
+                    [IO.FileMode]::OpenOrCreate,
+                    [IO.FileAccess]::ReadWrite,
+                    [IO.FileShare]::None
+                )
+            }
+            catch [IO.IOException] {
+                if ([DateTime]::UtcNow -ge $deadline) {
+                    throw 'Credential store is busy.'
+                }
+                Start-Sleep -Milliseconds 50
+            }
+            catch [UnauthorizedAccessException] {
+                throw 'Credential store directory permissions could not be secured.'
+            }
         }
 
-        if (-not $acquired) {
-            throw 'Credential store is busy.'
-        }
-
+        Protect-CredentialStoreDirectory -StorePath $StorePath
         return & $Action
     }
     finally {
-        if ($acquired) {
-            $mutex.ReleaseMutex()
+        if ($null -ne $lockStream) {
+            $lockStream.Dispose()
         }
-        $mutex.Dispose()
     }
 }
 
@@ -118,7 +220,14 @@ function Test-CredentialStorePropertySet {
     }
 
     foreach ($propertyName in $Expected) {
-        if ($actual -notcontains $propertyName) {
+        $matches = @($actual | Where-Object {
+            [string]::Equals(
+                $_,
+                $propertyName,
+                [StringComparison]::Ordinal
+            )
+        })
+        if ($matches.Count -ne 1) {
             return $false
         }
     }
@@ -145,7 +254,7 @@ function Read-CredentialStore {
 
     try {
         $document = [IO.File]::ReadAllText($StorePath) | ConvertFrom-Json
-        if ($null -eq $document) {
+        if ($null -eq $document -or $document -isnot [pscustomobject]) {
             throw 'invalid'
         }
         if (-not (Test-CredentialStorePropertySet -InputObject $document -Expected @(
@@ -153,10 +262,17 @@ function Read-CredentialStore {
         ))) {
             throw 'invalid'
         }
-        if ($document.schema_version -ne $script:CredentialStoreSchemaVersion) {
+        if (
+            $document.schema_version -isnot [string] -or
+            -not [string]::Equals(
+                $document.schema_version,
+                $script:CredentialStoreSchemaVersion,
+                [StringComparison]::Ordinal
+            )
+        ) {
             throw 'invalid'
         }
-        if ($null -eq $document.credentials) {
+        if ($document.credentials -isnot [array]) {
             throw 'invalid'
         }
 
@@ -164,12 +280,26 @@ function Read-CredentialStore {
             [StringComparer]::OrdinalIgnoreCase
         )
         foreach ($credential in @($document.credentials)) {
-            if ($null -eq $credential -or -not (
+            if (
+                $null -eq $credential -or
+                $credential -isnot [pscustomobject] -or
+                -not (
                 Test-CredentialStorePropertySet -InputObject $credential -Expected @(
                     'name', 'ciphertext', 'created_at', 'updated_at'
                 )
             )) {
                 throw 'invalid'
+            }
+            foreach ($propertyName in @(
+                'name', 'ciphertext', 'created_at', 'updated_at'
+            )) {
+                $value = $credential.PSObject.Properties[$propertyName].Value
+                if (
+                    $value -isnot [string] -or
+                    [string]::IsNullOrWhiteSpace($value)
+                ) {
+                    throw 'invalid'
+                }
             }
             Assert-ManagedCredentialName -Name $credential.name
             if (-not $seenNames.Add($credential.name)) {
@@ -373,15 +503,17 @@ function Get-ManagedCredential {
 
     Assert-ManagedCredentialName -Name $Name
     $resolvedPath = Resolve-CredentialStorePath -StorePath $StorePath
-    $document = Read-CredentialStore -StorePath $resolvedPath
-    $matches = @($document.credentials | Where-Object {
-        Test-ManagedCredentialNameEqual -Left $_.name -Right $Name
-    })
-    if ($matches.Count -eq 0) {
-        throw 'Managed credential was not found.'
-    }
+    return Invoke-WithCredentialStoreLock -StorePath $resolvedPath -Action {
+        $document = Read-CredentialStore -StorePath $resolvedPath
+        $matches = @($document.credentials | Where-Object {
+            Test-ManagedCredentialNameEqual -Left $_.name -Right $Name
+        })
+        if ($matches.Count -eq 0) {
+            throw 'Managed credential was not found.'
+        }
 
-    return Unprotect-ManagedSecureString -Ciphertext $matches[0].ciphertext
+        return Unprotect-ManagedSecureString -Ciphertext $matches[0].ciphertext
+    }
 }
 
 function Remove-ManagedCredential {
@@ -417,18 +549,20 @@ function Get-ManagedCredentialMetadata {
     )
 
     $resolvedPath = Resolve-CredentialStorePath -StorePath $StorePath
-    $document = Read-CredentialStore -StorePath $resolvedPath
-    return @($document.credentials | ForEach-Object {
-        [pscustomobject][ordered]@{
-            Name = $_.name
-            CreatedAt = [DateTimeOffset]::Parse(
-                $_.created_at,
-                [Globalization.CultureInfo]::InvariantCulture
-            ).UtcDateTime
-            UpdatedAt = [DateTimeOffset]::Parse(
-                $_.updated_at,
-                [Globalization.CultureInfo]::InvariantCulture
-            ).UtcDateTime
-        }
-    })
+    return Invoke-WithCredentialStoreLock -StorePath $resolvedPath -Action {
+        $document = Read-CredentialStore -StorePath $resolvedPath
+        return @($document.credentials | ForEach-Object {
+            [pscustomobject][ordered]@{
+                Name = $_.name
+                CreatedAt = [DateTimeOffset]::Parse(
+                    $_.created_at,
+                    [Globalization.CultureInfo]::InvariantCulture
+                ).UtcDateTime
+                UpdatedAt = [DateTimeOffset]::Parse(
+                    $_.updated_at,
+                    [Globalization.CultureInfo]::InvariantCulture
+                ).UtcDateTime
+            }
+        })
+    }
 }

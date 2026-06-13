@@ -37,6 +37,108 @@ function Get-TestExceptionMessage {
     }
 }
 
+function Test-JunctionAvailable {
+    $probeRoot = Join-Path ([IO.Path]::GetTempPath()) (
+        'credential-junction-probe-' + [Guid]::NewGuid().ToString('N')
+    )
+    $target = $probeRoot + '-target'
+    try {
+        New-Item -ItemType Directory -Path $target -Force | Out-Null
+        New-Item -ItemType Junction -Path $probeRoot -Target $target `
+            -ErrorAction Stop | Out-Null
+        return $true
+    }
+    catch {
+        return $false
+    }
+    finally {
+        if (Test-Path -LiteralPath $probeRoot) {
+            [IO.Directory]::Delete($probeRoot)
+        }
+        if (Test-Path -LiteralPath $target) {
+            Remove-Item -LiteralPath $target -Recurse -Force
+        }
+    }
+}
+
+function Invoke-TestConcurrentWriters {
+    param(
+        [string[]]$StorePaths,
+        [int]$WriterCount,
+        [string]$WorkingRoot,
+        [string]$SecretPrefix
+    )
+
+    $barrierRoot = Join-Path $WorkingRoot ('barrier-' + [Guid]::NewGuid().ToString('N'))
+    $goPath = Join-Path $barrierRoot 'go'
+    $processes = @()
+    $expectedSecrets = @{}
+    New-Item -ItemType Directory -Path $barrierRoot -Force | Out-Null
+    try {
+        foreach ($index in 0..($WriterCount - 1)) {
+            $name = 'concurrent-' + $index
+            $secretText = $SecretPrefix + '-' + $index
+            $expectedSecrets[$name] = $secretText
+            $storePath = $StorePaths[$index % $StorePaths.Count]
+            $readyPath = Join-Path $barrierRoot ('ready-' + $index)
+            $command = @"
+. '$($credentialLibrary.Replace("'", "''"))'
+[IO.File]::WriteAllText('$($readyPath.Replace("'", "''"))', '')
+`$deadline = [DateTime]::UtcNow.AddSeconds(30)
+while (-not (Test-Path -LiteralPath '$($goPath.Replace("'", "''"))')) {
+    if ([DateTime]::UtcNow -ge `$deadline) { exit 91 }
+    Start-Sleep -Milliseconds 10
+}
+`$secret = ConvertTo-SecureString '$($secretText.Replace("'", "''"))' -AsPlainText -Force
+Set-ManagedCredential -Name '$name' -Secret `$secret -StorePath '$($storePath.Replace("'", "''"))'
+"@
+            $encodedCommand = [Convert]::ToBase64String(
+                [Text.Encoding]::Unicode.GetBytes($command)
+            )
+            $processes += Start-Process powershell -ArgumentList @(
+                '-NoProfile',
+                '-EncodedCommand',
+                $encodedCommand
+            ) -PassThru -WindowStyle Hidden
+        }
+
+        $readyDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        while (@(Get-ChildItem -LiteralPath $barrierRoot -Filter 'ready-*').Count -lt $WriterCount) {
+            if ([DateTime]::UtcNow -ge $readyDeadline) {
+                throw 'Concurrent writer startup barrier timed out.'
+            }
+            Start-Sleep -Milliseconds 20
+        }
+        [IO.File]::WriteAllText($goPath, '')
+
+        $exitCodes = @()
+        foreach ($process in $processes) {
+            if (-not $process.WaitForExit(30000)) {
+                throw 'Concurrent credential writer timed out.'
+            }
+            $exitCodes += $process.ExitCode
+        }
+
+        return [pscustomobject]@{
+            ExitCodes = $exitCodes
+            ExpectedSecrets = $expectedSecrets
+        }
+    }
+    finally {
+        foreach ($process in $processes) {
+            if (-not $process.HasExited) {
+                $process.Kill()
+            }
+            $process.Dispose()
+        }
+        if (Test-Path -LiteralPath $barrierRoot) {
+            Remove-Item -LiteralPath $barrierRoot -Recurse -Force
+        }
+    }
+}
+
+$script:junctionAvailable = Test-JunctionAvailable
+
 Describe 'CredentialStore' {
     BeforeAll {
         . $credentialLibrary
@@ -97,6 +199,8 @@ Describe 'CredentialStore' {
 
         $document = [IO.File]::ReadAllText($script:storePath) | ConvertFrom-Json
         @($document.PSObject.Properties.Name) | Should Be @('schema_version', 'credentials')
+        $document.schema_version.GetType().FullName | Should Be 'System.String'
+        $document.schema_version | Should Be '1'
         @($document.credentials[0].PSObject.Properties.Name) |
             Should Be @('name', 'ciphertext', 'created_at', 'updated_at')
     }
@@ -196,6 +300,78 @@ Describe 'CredentialStore' {
         $message.Contains($script:secretText) | Should Be $false
     }
 
+    It 'rejects a numeric schema version instead of coercing it' {
+        New-Item -ItemType Directory -Path $script:caseRoot -Force | Out-Null
+        [IO.File]::WriteAllText(
+            $script:storePath,
+            '{"schema_version":1,"credentials":[]}'
+        )
+
+        (Get-TestExceptionMessage {
+            Get-ManagedCredentialMetadata -StorePath $script:storePath
+        }) | Should Be 'Credential store is invalid.'
+    }
+
+    It 'rejects an unsupported string schema version' {
+        New-Item -ItemType Directory -Path $script:caseRoot -Force | Out-Null
+        [IO.File]::WriteAllText(
+            $script:storePath,
+            '{"schema_version":"2","credentials":[]}'
+        )
+
+        (Get-TestExceptionMessage {
+            Get-ManagedCredentialMetadata -StorePath $script:storePath
+        }) | Should Be 'Credential store is invalid.'
+    }
+
+    It 'rejects credentials that are an object instead of an array' {
+        New-Item -ItemType Directory -Path $script:caseRoot -Force | Out-Null
+        [IO.File]::WriteAllText(
+            $script:storePath,
+            '{"schema_version":"1","credentials":{}}'
+        )
+
+        (Get-TestExceptionMessage {
+            Get-ManagedCredentialMetadata -StorePath $script:storePath
+        }) | Should Be 'Credential store is invalid.'
+    }
+
+    It 'rejects case-variant credential field names' {
+        New-Item -ItemType Directory -Path $script:caseRoot -Force | Out-Null
+        $json = @'
+{"schema_version":"1","credentials":[{"Name":"x","ciphertext":"AA==","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}]}
+'@
+        [IO.File]::WriteAllText($script:storePath, $json)
+
+        (Get-TestExceptionMessage {
+            Get-ManagedCredentialMetadata -StorePath $script:storePath
+        }) | Should Be 'Credential store is invalid.'
+    }
+
+    It 'rejects unknown credential fields' {
+        New-Item -ItemType Directory -Path $script:caseRoot -Force | Out-Null
+        $json = @'
+{"schema_version":"1","credentials":[{"name":"x","ciphertext":"AA==","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","extra":"x"}]}
+'@
+        [IO.File]::WriteAllText($script:storePath, $json)
+
+        (Get-TestExceptionMessage {
+            Get-ManagedCredentialMetadata -StorePath $script:storePath
+        }) | Should Be 'Credential store is invalid.'
+    }
+
+    It 'rejects empty or non-string credential fields' {
+        New-Item -ItemType Directory -Path $script:caseRoot -Force | Out-Null
+        $json = @'
+{"schema_version":"1","credentials":[{"name":123,"ciphertext":"","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}]}
+'@
+        [IO.File]::WriteAllText($script:storePath, $json)
+
+        (Get-TestExceptionMessage {
+            Get-ManagedCredentialMetadata -StorePath $script:storePath
+        }) | Should Be 'Credential store is invalid.'
+    }
+
     It 'rejects stored duplicate names that differ only by casing' {
         Set-ManagedCredential -Name 'CaseName' -Secret $script:secret -StorePath $script:storePath
         $document = [IO.File]::ReadAllText($script:storePath) | ConvertFrom-Json
@@ -261,54 +437,89 @@ Describe 'CredentialStore' {
             $_.Name -like '*.tmp-*' -or $_.Name -like '*.bak-*'
         })
         $residue.Count | Should Be 0
+        $lockPath = $script:storePath + '.lock'
+        (Test-Path -LiteralPath $lockPath -PathType Leaf) | Should Be $true
+        (Get-Item -LiteralPath $lockPath).Length | Should Be 0
+        ([IO.File]::ReadAllText($lockPath).Contains($script:secretText)) |
+            Should Be $false
     }
 
-    It 'serializes concurrent writers without losing credentials' {
-        $processes = @()
-        $expectedSecrets = @{}
+    It 'serializes same-path writers released by a startup barrier' {
+        $result = Invoke-TestConcurrentWriters -StorePaths @($script:storePath) `
+            -WriterCount 8 -WorkingRoot $script:caseRoot `
+            -SecretPrefix $script:secretText
+
+        @($result.ExitCodes | Where-Object { $_ -ne 0 }).Count | Should Be 0
+        @(Get-ManagedCredentialMetadata -StorePath $script:storePath).Count |
+            Should Be 8
+    }
+
+    It 'serializes junction-alias writers against the same lock file' `
+        -Skip:(-not $script:junctionAvailable) {
+        New-Item -ItemType Directory -Path $script:caseRoot -Force | Out-Null
+        $aliasRoot = $script:caseRoot + '-junction'
+        New-Item -ItemType Junction -Path $aliasRoot -Target $script:caseRoot |
+            Out-Null
         try {
-            foreach ($index in 0..3) {
-                $name = 'concurrent-' + $index
-                $secretText = $script:secretText + '-' + $index
-                $expectedSecrets[$name] = $secretText
-                $escapedLibrary = $credentialLibrary.Replace("'", "''")
-                $escapedStorePath = $script:storePath.Replace("'", "''")
-                $escapedSecret = $secretText.Replace("'", "''")
-                $command = @"
-. '$escapedLibrary'
-`$secret = ConvertTo-SecureString '$escapedSecret' -AsPlainText -Force
-Set-ManagedCredential -Name '$name' -Secret `$secret -StorePath '$escapedStorePath'
-"@
-                $encodedCommand = [Convert]::ToBase64String(
-                    [Text.Encoding]::Unicode.GetBytes($command)
-                )
-                $processes += Start-Process powershell -ArgumentList @(
-                    '-NoProfile',
-                    '-EncodedCommand',
-                    $encodedCommand
-                ) -PassThru -WindowStyle Hidden
-            }
+            $aliasStorePath = Join-Path $aliasRoot 'credentials.dpapi'
+            $result = Invoke-TestConcurrentWriters `
+                -StorePaths @($script:storePath, $aliasStorePath) `
+                -WriterCount 20 -WorkingRoot $script:caseRoot `
+                -SecretPrefix $script:secretText
 
-            foreach ($process in $processes) {
-                $process.WaitForExit(30000) | Should Be $true
-                $process.ExitCode | Should Be 0
-            }
-
-            $metadata = @(Get-ManagedCredentialMetadata -StorePath $script:storePath)
-            $metadata.Count | Should Be 4
-            foreach ($name in $expectedSecrets.Keys) {
-                (ConvertFrom-TestSecureString (
-                    Get-ManagedCredential -Name $name -StorePath $script:storePath
-                )) | Should Be $expectedSecrets[$name]
-            }
+            @($result.ExitCodes | Where-Object { $_ -ne 0 }).Count | Should Be 0
+            @(Get-ManagedCredentialMetadata -StorePath $script:storePath).Count |
+                Should Be 20
         }
         finally {
-            foreach ($process in $processes) {
-                if (-not $process.HasExited) {
-                    $process.Kill()
-                }
-                $process.Dispose()
+            if (Test-Path -LiteralPath $aliasRoot) {
+                [IO.Directory]::Delete($aliasRoot)
             }
         }
+    }
+
+    It 'protects the storage directory for only the current user and SYSTEM' {
+        Set-ManagedCredential -Name 'service-token' -Secret $script:secret `
+            -StorePath $script:storePath
+
+        $acl = Get-Acl -LiteralPath $script:caseRoot
+        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $systemSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
+        $rules = @($acl.GetAccessRules(
+            $true,
+            $false,
+            [Security.Principal.SecurityIdentifier]
+        ))
+
+        $acl.AreAccessRulesProtected | Should Be $true
+        @($rules | Where-Object {
+            $_.AccessControlType -eq 'Allow' -and
+            $_.IdentityReference -ne $currentSid -and
+            $_.IdentityReference -ne $systemSid
+        }).Count | Should Be 0
+        @($rules | Where-Object {
+            $_.IdentityReference -eq $currentSid -and
+            ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl)
+        }).Count | Should BeGreaterThan 0
+        @($rules | Where-Object {
+            $_.IdentityReference -eq $systemSid -and
+            ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl)
+        }).Count | Should BeGreaterThan 0
+        [IO.File]::WriteAllText((Join-Path $script:caseRoot 'write-check'), '')
+    }
+
+    It 'fails Set with a stable secret-free error when directory security cannot be established' {
+        New-Item -ItemType Directory -Path $script:caseRoot -Force | Out-Null
+        $blockedParent = Join-Path $script:caseRoot $script:secretText
+        [IO.File]::WriteAllText($blockedParent, '')
+        $blockedStore = Join-Path $blockedParent 'credentials.dpapi'
+
+        $message = Get-TestExceptionMessage {
+            Set-ManagedCredential -Name 'service-token' -Secret $script:secret `
+                -StorePath $blockedStore
+        }
+
+        $message | Should Be 'Credential store directory permissions could not be secured.'
+        $message.Contains($script:secretText) | Should Be $false
     }
 }
