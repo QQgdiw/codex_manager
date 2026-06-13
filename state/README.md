@@ -38,8 +38,9 @@
 ## 当前能力状态
 
 - `tests/Run-Tests.ps1` 提供 Pester 3.4 兼容入口，支持 `-Unit`、`-Integration`、`-All`，默认执行全部测试，并在测试失败或零匹配时返回非零。
-- `tests/unit/Baseline.Tests.ps1` 验证 Windows PowerShell 主版本不低于 5，并包含稳定、离线的真实断言。
-- `.gitignore` 已覆盖本地凭据、认证文件、测试产物、日志、Python 缓存和 MCP 第三方依赖。
+- `tests/unit/Baseline.Tests.ps1` 验证 Windows PowerShell 主版本不低于 5，并通过隔离的临时测试目录验证默认 All、Unit/Integration 选择、零匹配和失败退出码。
+- 测试入口将普通测试失败返回为 1，将零匹配、Pester 加载异常或零执行等基础设施错误返回为 2。
+- `.gitignore` 已覆盖本地凭据、认证文件、`.env` 文件、测试产物、日志、Python 缓存和 MCP 第三方依赖，同时允许提交 `.env.example`。
 - 当前会话具备完成首期所需的检索、浏览器、文件、PowerShell、测试和 Git 能力，无需立即安装额外扩展。
 - Codex CLI 当前未配置 marketplace plugin 和 MCP。
 - 根目录 `config.toml` 当前不能视为 Codex 已加载配置。

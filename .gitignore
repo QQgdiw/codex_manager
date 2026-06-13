@@ -8,6 +8,9 @@ auth.json
 *.credential
 *.dpapi
 *.log
+.env
+.env.*
+!.env.example
 
 # Test and coverage output
 coverage/

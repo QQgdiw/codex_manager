@@ -5,8 +5,6 @@ param(
     [switch]$All
 )
 
-$ErrorActionPreference = 'Stop'
-
 if (-not ($Unit -or $Integration -or $All)) {
     $All = $true
 }
@@ -28,7 +26,7 @@ $testFiles = @(
 )
 
 if ($testFiles.Count -eq 0) {
-    Write-Error 'No matching Pester tests were found.'
+    [Console]::Error.WriteLine('No matching Pester tests were found.')
     exit 2
 }
 
@@ -37,12 +35,12 @@ try {
     $result = Invoke-Pester -Script $testFiles.FullName -PassThru
 }
 catch {
-    Write-Error $_
+    [Console]::Error.WriteLine($_.Exception.Message)
     exit 2
 }
 
 if ($null -eq $result -or $result.TotalCount -eq 0) {
-    Write-Error 'Pester did not execute any tests.'
+    [Console]::Error.WriteLine('Pester did not execute any tests.')
     exit 2
 }
 

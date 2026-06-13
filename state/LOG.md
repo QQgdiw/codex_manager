@@ -1,5 +1,13 @@
 # 项目关键记录
 
+## 2026-06-13：Task 1 测试入口审查修复
+
+- 审查确认原基线中的 `2 + 2` 断言不能证明测试入口行为，已删除。
+- 新测试将 `Run-Tests.ps1` 复制到独立临时目录，动态创建 unit/integration Pester 夹具，并通过子 PowerShell 进程检查真实退出码；临时 runner 不会发现仓库自身测试，因此不会递归调用。
+- RED：入口级测试共 6 项，5 项通过；零匹配预期退出 2、实际退出 1，准确复现全局 `ErrorActionPreference = 'Stop'` 使 `Write-Error` 提前终止的问题。
+- GREEN：移除全局 Stop 偏好，并使用 stderr 直接报告基础设施错误后，6 项全部通过；默认模式执行 unit 和 integration，选择器只执行目标范围，普通测试失败返回 1，零匹配返回 2。
+- `.gitignore` 新增 `.env` 和 `.env.*`，并通过 `!.env.example` 保留可提交的示例配置。
+
 ## 2026-06-13：Task 1 仓库安全与测试基线
 
 - RED：直接运行 `Baseline.Tests.ps1` 时共执行 4 项，2 项通过、2 项因 `tests/Run-Tests.ps1` 缺失而失败，确认测试能捕获缺失入口。
