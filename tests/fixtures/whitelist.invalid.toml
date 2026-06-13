@@ -1,0 +1,22 @@
+schema_version = 1
+
+[[tools]]
+id = "duplicate"
+name = "Missing Fields"
+type = "unknown"
+sha256 = "ABC123"
+approval = "pending"
+
+[[tools]]
+id = "duplicate"
+name = "Duplicate ID"
+type = "plugin"
+source = "https://github.com/example/duplicate"
+version = "v1.0.0"
+sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+license = "MIT"
+approval = "approved"
+risk = "low"
+install_target = "Plugins/duplicate"
+credential_refs = []
+conflicts = []

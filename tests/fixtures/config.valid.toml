@@ -1,0 +1,3 @@
+schema_version = 1
+name = "basic"
+tool_ids = ["skill.example"]

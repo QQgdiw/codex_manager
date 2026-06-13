@@ -1,0 +1,15 @@
+schema_version = 1
+
+[[tools]]
+id = "skill.example"
+name = "Example Skill"
+type = "skill"
+source = "https://github.com/example/example-skill"
+version = "v1.0.0"
+sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+license = "MIT"
+approval = "proposed"
+risk = "low"
+install_target = "Skills/example-skill"
+credential_refs = []
+conflicts = []
