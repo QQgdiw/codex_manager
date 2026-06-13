@@ -18,6 +18,22 @@ function Assert-ManagedCredentialName {
     }
 }
 
+function Test-ManagedCredentialNameEqual {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Left,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Right
+    )
+
+    return [string]::Equals(
+        $Left,
+        $Right,
+        [StringComparison]::OrdinalIgnoreCase
+    )
+}
+
 function Resolve-CredentialStorePath {
     param(
         [Parameter(Mandatory = $true)]
@@ -144,7 +160,9 @@ function Read-CredentialStore {
             throw 'invalid'
         }
 
-        $seenNames = @{}
+        $seenNames = New-Object 'Collections.Generic.HashSet[string]' (
+            [StringComparer]::OrdinalIgnoreCase
+        )
         foreach ($credential in @($document.credentials)) {
             if ($null -eq $credential -or -not (
                 Test-CredentialStorePropertySet -InputObject $credential -Expected @(
@@ -154,10 +172,9 @@ function Read-CredentialStore {
                 throw 'invalid'
             }
             Assert-ManagedCredentialName -Name $credential.name
-            if ($seenNames.ContainsKey($credential.name)) {
+            if (-not $seenNames.Add($credential.name)) {
                 throw 'invalid'
             }
-            $seenNames[$credential.name] = $true
             [void][Convert]::FromBase64String($credential.ciphertext)
             [void][DateTimeOffset]::Parse(
                 $credential.created_at,
@@ -326,7 +343,9 @@ function Set-ManagedCredential {
             'o',
             [Globalization.CultureInfo]::InvariantCulture
         )
-        $existing = @($document.credentials | Where-Object { $_.name -ceq $Name })
+        $existing = @($document.credentials | Where-Object {
+            Test-ManagedCredentialNameEqual -Left $_.name -Right $Name
+        })
         if ($existing.Count -eq 1) {
             $existing[0].ciphertext = $ciphertext
             $existing[0].updated_at = $now
@@ -355,7 +374,9 @@ function Get-ManagedCredential {
     Assert-ManagedCredentialName -Name $Name
     $resolvedPath = Resolve-CredentialStorePath -StorePath $StorePath
     $document = Read-CredentialStore -StorePath $resolvedPath
-    $matches = @($document.credentials | Where-Object { $_.name -ceq $Name })
+    $matches = @($document.credentials | Where-Object {
+        Test-ManagedCredentialNameEqual -Left $_.name -Right $Name
+    })
     if ($matches.Count -eq 0) {
         throw 'Managed credential was not found.'
     }
@@ -376,7 +397,9 @@ function Remove-ManagedCredential {
     $resolvedPath = Resolve-CredentialStorePath -StorePath $StorePath
     return Invoke-WithCredentialStoreLock -StorePath $resolvedPath -Action {
         $document = Read-CredentialStore -StorePath $resolvedPath
-        $remaining = @($document.credentials | Where-Object { $_.name -cne $Name })
+        $remaining = @($document.credentials | Where-Object {
+            -not (Test-ManagedCredentialNameEqual -Left $_.name -Right $Name)
+        })
         if ($remaining.Count -eq @($document.credentials).Count) {
             return $false
         }

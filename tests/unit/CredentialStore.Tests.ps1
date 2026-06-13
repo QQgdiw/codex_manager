@@ -120,6 +120,27 @@ Describe 'CredentialStore' {
         )) | Should Be $replacementText
     }
 
+    It 'matches credential names using OrdinalIgnoreCase and preserves the first name casing' {
+        Set-ManagedCredential -Name 'CaseName' -Secret $script:secret -StorePath $script:storePath
+        $replacementText = $script:secretText + '-case-update'
+        $replacement = ConvertTo-SecureString $replacementText -AsPlainText -Force
+
+        Set-ManagedCredential -Name 'casename' -Secret $replacement -StorePath $script:storePath
+
+        $storedDocument = [IO.File]::ReadAllText($script:storePath) | ConvertFrom-Json
+        @($storedDocument.credentials).Count | Should Be 1
+        $storedDocument.credentials[0].name | Should Be 'CaseName'
+        (ConvertFrom-TestSecureString (
+            Get-ManagedCredential -Name 'CASENAME' -StorePath $script:storePath
+        )) | Should Be $replacementText
+        $metadata = @(Get-ManagedCredentialMetadata -StorePath $script:storePath)
+        $metadata.Count | Should Be 1
+        $metadata[0].Name | Should Be 'CaseName'
+        (Remove-ManagedCredential -Name 'caseNAME' -StorePath $script:storePath) |
+            Should Be $true
+        (Get-ManagedCredentialMetadata -StorePath $script:storePath).Count | Should Be 0
+    }
+
     It 'removes an existing credential and returns true' {
         Set-ManagedCredential -Name 'service-token' -Secret $script:secret -StorePath $script:storePath
 
@@ -154,7 +175,7 @@ Describe 'CredentialStore' {
         ($metadata[0].PSObject.Properties.Name -contains 'ciphertext') | Should Be $false
     }
 
-    It 'rejects an invalid credential name before creating storage' {
+    It 'enforces the designed ASCII safe-character rule for credential names' {
         $message = Get-TestExceptionMessage {
             Set-ManagedCredential -Name '../unsafe' -Secret $script:secret -StorePath $script:storePath
         }
@@ -173,6 +194,28 @@ Describe 'CredentialStore' {
 
         $message | Should Be 'Credential store is invalid.'
         $message.Contains($script:secretText) | Should Be $false
+    }
+
+    It 'rejects stored duplicate names that differ only by casing' {
+        Set-ManagedCredential -Name 'CaseName' -Secret $script:secret -StorePath $script:storePath
+        $document = [IO.File]::ReadAllText($script:storePath) | ConvertFrom-Json
+        $duplicate = [pscustomobject][ordered]@{
+            name = 'casename'
+            ciphertext = $document.credentials[0].ciphertext
+            created_at = $document.credentials[0].created_at
+            updated_at = $document.credentials[0].updated_at
+        }
+        $document.credentials = @($document.credentials[0], $duplicate)
+        [IO.File]::WriteAllText(
+            $script:storePath,
+            ($document | ConvertTo-Json -Depth 4)
+        )
+
+        $message = Get-TestExceptionMessage {
+            Get-ManagedCredentialMetadata -StorePath $script:storePath
+        }
+
+        $message | Should Be 'Credential store is invalid.'
     }
 
     It 'treats tampered ciphertext as a fatal non-sensitive error' {
@@ -218,5 +261,54 @@ Describe 'CredentialStore' {
             $_.Name -like '*.tmp-*' -or $_.Name -like '*.bak-*'
         })
         $residue.Count | Should Be 0
+    }
+
+    It 'serializes concurrent writers without losing credentials' {
+        $processes = @()
+        $expectedSecrets = @{}
+        try {
+            foreach ($index in 0..3) {
+                $name = 'concurrent-' + $index
+                $secretText = $script:secretText + '-' + $index
+                $expectedSecrets[$name] = $secretText
+                $escapedLibrary = $credentialLibrary.Replace("'", "''")
+                $escapedStorePath = $script:storePath.Replace("'", "''")
+                $escapedSecret = $secretText.Replace("'", "''")
+                $command = @"
+. '$escapedLibrary'
+`$secret = ConvertTo-SecureString '$escapedSecret' -AsPlainText -Force
+Set-ManagedCredential -Name '$name' -Secret `$secret -StorePath '$escapedStorePath'
+"@
+                $encodedCommand = [Convert]::ToBase64String(
+                    [Text.Encoding]::Unicode.GetBytes($command)
+                )
+                $processes += Start-Process powershell -ArgumentList @(
+                    '-NoProfile',
+                    '-EncodedCommand',
+                    $encodedCommand
+                ) -PassThru -WindowStyle Hidden
+            }
+
+            foreach ($process in $processes) {
+                $process.WaitForExit(30000) | Should Be $true
+                $process.ExitCode | Should Be 0
+            }
+
+            $metadata = @(Get-ManagedCredentialMetadata -StorePath $script:storePath)
+            $metadata.Count | Should Be 4
+            foreach ($name in $expectedSecrets.Keys) {
+                (ConvertFrom-TestSecureString (
+                    Get-ManagedCredential -Name $name -StorePath $script:storePath
+                )) | Should Be $expectedSecrets[$name]
+            }
+        }
+        finally {
+            foreach ($process in $processes) {
+                if (-not $process.HasExited) {
+                    $process.Kill()
+                }
+                $process.Dispose()
+            }
+        }
     }
 }
