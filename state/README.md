@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-项目需求澄清和项目计划已经完成，正式文档分别位于 `Resources/PRD.md` 与 `Resources/PP.md`。下一阶段按 PP 建立测试基线、白名单 Schema 和 PowerShell 自动化核心。
+项目需求澄清和项目计划已经完成，正式文档分别位于 `Resources/PRD.md` 与 `Resources/PP.md`。PP Task 1 已建立仓库安全与测试基线；下一阶段将定义白名单 Schema 和 PowerShell 自动化核心。
 
 ## 首期范围
 
@@ -37,6 +37,9 @@
 
 ## 当前能力状态
 
+- `tests/Run-Tests.ps1` 提供 Pester 3.4 兼容入口，支持 `-Unit`、`-Integration`、`-All`，默认执行全部测试，并在测试失败或零匹配时返回非零。
+- `tests/unit/Baseline.Tests.ps1` 验证 Windows PowerShell 主版本不低于 5，并包含稳定、离线的真实断言。
+- `.gitignore` 已覆盖本地凭据、认证文件、测试产物、日志、Python 缓存和 MCP 第三方依赖。
 - 当前会话具备完成首期所需的检索、浏览器、文件、PowerShell、测试和 Git 能力，无需立即安装额外扩展。
 - Codex CLI 当前未配置 marketplace plugin 和 MCP。
 - 根目录 `config.toml` 当前不能视为 Codex 已加载配置。

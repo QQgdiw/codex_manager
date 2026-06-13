@@ -7,4 +7,15 @@ auth.json
 .secrets/
 *.credential
 *.dpapi
+*.log
 
+# Test and coverage output
+coverage/
+TestResults/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Third-party MCP dependencies
+MCP/servers/node_modules/

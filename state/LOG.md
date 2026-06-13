@@ -1,5 +1,14 @@
 # 项目关键记录
 
+## 2026-06-13：Task 1 仓库安全与测试基线
+
+- RED：直接运行 `Baseline.Tests.ps1` 时共执行 4 项，2 项通过、2 项因 `tests/Run-Tests.ps1` 缺失而失败，确认测试能捕获缺失入口。
+- GREEN：实现入口并修正 Pester 3.4 集合断言语法后，`-All` 共执行 4 项，4 项通过、0 项失败，退出码为 0。
+- `-Unit` 和无参数默认模式退出码均为 0；当前没有集成测试时，`-Integration` 返回非零，未出现零测试假成功。
+- Pester 3.4 的 `Should Contain` 用于检查文件内容，不适合直接检查集合成员；集合契约使用 PowerShell 原生 `-contains` 后再断言布尔值。
+- 测试入口先枚举匹配的 `*.Tests.ps1` 文件；匹配数为 0、Pester 未执行测试、Pester 抛错或测试失败时均返回非零。
+- `.gitignore` 保留 `.worktrees/`、`auth.json`、`.codex/auth.json` 和凭据规则，并补充测试产物、日志、Python 缓存及 `MCP/servers/node_modules/`。
+
 ## 2026-06-13：需求文档读取编码
 
 - `需求文档.txt` 使用 UTF-8 编码。
