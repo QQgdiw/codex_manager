@@ -13,6 +13,12 @@ function Get-ThrownMessage {
     }
 }
 
+function ConvertTo-CodePointText {
+    param([string]$Value)
+
+    return (($Value.ToCharArray() | ForEach-Object { '{0:X4}' -f [int]$_ }) -join ' ')
+}
+
 Describe 'New-OperationResult' {
     BeforeAll {
         . $commonLibrary
@@ -89,7 +95,8 @@ param(
 switch ($Mode) {
     'echo' {
         [Console]::Out.WriteLine($Value)
-        [Console]::Error.WriteLine("错误:$Value")
+        $errorPrefix = ([char]0x9519) + ([char]0x8BEF) + ':'
+        [Console]::Error.WriteLine($errorPrefix + $Value)
     }
     'exit' {
         [Console]::Error.WriteLine('expected failure')
@@ -108,15 +115,17 @@ switch ($Mode) {
     }
 
     It 'captures successful UTF-8 stdout and stderr' {
+        $value = ([char]0x4E2D) + ([char]0x6587) + ' ' + ([char]0x53C2) + ([char]0x6570)
+        $errorPrefix = ([char]0x9519) + ([char]0x8BEF) + ':'
         $result = Invoke-ManagedProcess -FilePath $powerShellPath -Arguments @(
-            '-NoProfile', '-File', $childScript, 'echo', '中文 参数'
+            '-NoProfile', '-File', $childScript, 'echo', $value
         ) -TimeoutSeconds 10
 
         $result.ExitCode | Should Be 0
         $result.TimedOut | Should Be $false
         $result.Succeeded | Should Be $true
-        $result.StdOut.Trim() | Should Be '中文 参数'
-        $result.StdErr.Trim() | Should Be '错误:中文 参数'
+        (ConvertTo-CodePointText $result.StdOut.Trim()) | Should Be (ConvertTo-CodePointText $value)
+        (ConvertTo-CodePointText $result.StdErr.Trim()) | Should Be (ConvertTo-CodePointText ($errorPrefix + $value))
         ($result.DurationMs -ge 0) | Should Be $true
     }
 
