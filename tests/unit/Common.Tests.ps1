@@ -81,7 +81,9 @@ Describe 'Invoke-ManagedProcess' {
         . $commonLibrary
 
         $script:powerShellPath = Join-Path $PSHOME 'powershell.exe'
+        $script:pythonPath = (Get-Command python -ErrorAction Stop).Source
         $script:childScript = Join-Path $TestDrive 'managed-child.ps1'
+        $script:pythonChildScript = Join-Path $TestDrive 'managed-child.py'
         @'
 param(
     [string]$Mode,
@@ -112,6 +114,45 @@ switch ($Mode) {
     }
 }
 '@ | Set-Content -LiteralPath $script:childScript -Encoding UTF8
+        @'
+import os
+import subprocess
+import sys
+import time
+
+mode = sys.argv[1]
+
+if mode == "tree-parent":
+    pid_path = sys.argv[2]
+    inherit_streams = sys.argv[3] == "inherit"
+    kwargs = {}
+    if not inherit_streams:
+        kwargs["stdout"] = subprocess.DEVNULL
+        kwargs["stderr"] = subprocess.DEVNULL
+    child = subprocess.Popen(
+        [sys.executable, __file__, "tree-grandchild"],
+        **kwargs
+    )
+    with open(pid_path, "w") as handle:
+        handle.write(str(child.pid))
+    sys.stdout.write("parent-ready\n")
+    sys.stdout.flush()
+    time.sleep(30)
+elif mode == "tree-grandchild":
+    time.sleep(6)
+elif mode == "many-lines":
+    for number in range(1, 20001):
+        sys.stdout.write("out-%d\n" % number)
+        sys.stderr.write("err-%d\n" % number)
+elif mode == "long-line":
+    sys.stdout.write(("a" * 50000) + ("z" * 50000))
+elif mode == "invalid-utf8":
+    sys.stdout.buffer.write(b"valid-\xff-end\n")
+    sys.stderr.buffer.write(b"error-\xfe-end\n")
+    sys.stdout.buffer.flush()
+    sys.stderr.buffer.flush()
+    sys.exit(7)
+'@ | Set-Content -LiteralPath $script:pythonChildScript -Encoding ASCII
     }
 
     It 'captures successful UTF-8 stdout and stderr' {
@@ -165,6 +206,48 @@ switch ($Mode) {
         (Get-Process -Id $childPid -ErrorAction SilentlyContinue) | Should Be $null
     }
 
+    It 'terminates a timed out process tree whose grandchild inherits output pipes' {
+        $pidPath = Join-Path $TestDrive 'inherited-grandchild.pid'
+        $grandchildPid = $null
+
+        try {
+            $result = Invoke-ManagedProcess -FilePath $pythonPath -Arguments @(
+                $pythonChildScript, 'tree-parent', $pidPath, 'inherit'
+            ) -TimeoutSeconds 1
+            $grandchildPid = [int](Get-Content -LiteralPath $pidPath -Raw)
+
+            $result.TimedOut | Should Be $true
+            ($result.DurationMs -lt 4000) | Should Be $true
+            (Get-Process -Id $grandchildPid -ErrorAction SilentlyContinue) | Should Be $null
+        }
+        finally {
+            if ($null -ne $grandchildPid) {
+                Stop-Process -Id $grandchildPid -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'terminates a timed out process tree whose grandchild does not inherit output pipes' {
+        $pidPath = Join-Path $TestDrive 'detached-grandchild.pid'
+        $grandchildPid = $null
+
+        try {
+            $result = Invoke-ManagedProcess -FilePath $pythonPath -Arguments @(
+                $pythonChildScript, 'tree-parent', $pidPath, 'detached'
+            ) -TimeoutSeconds 1
+            $grandchildPid = [int](Get-Content -LiteralPath $pidPath -Raw)
+
+            $result.TimedOut | Should Be $true
+            ($result.DurationMs -lt 4000) | Should Be $true
+            (Get-Process -Id $grandchildPid -ErrorAction SilentlyContinue) | Should Be $null
+        }
+        finally {
+            if ($null -ne $grandchildPid) {
+                Stop-Process -Id $grandchildPid -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'keeps the first and last 25 stdout lines with an omission count' {
         $result = Invoke-ManagedProcess -FilePath $powerShellPath -Arguments @(
             '-NoProfile', '-File', $childScript, 'lines'
@@ -189,6 +272,52 @@ switch ($Mode) {
         $lines[25] | Should Be '[TRUNCATED: 5 lines omitted]'
         $lines[26] | Should Be 'err-31'
         $lines[50] | Should Be 'err-55'
+    }
+
+    It 'bounds very large stdout and stderr while preserving both edges' {
+        $result = Invoke-ManagedProcess -FilePath $pythonPath -Arguments @(
+            $pythonChildScript, 'many-lines'
+        ) -TimeoutSeconds 20
+
+        $stdoutLines = @($result.StdOut -split '\r?\n')
+        $stderrLines = @($result.StdErr -split '\r?\n')
+        $stdoutLines.Count | Should Be 51
+        $stderrLines.Count | Should Be 51
+        $stdoutLines[25] | Should Be '[TRUNCATED: 19950 lines omitted]'
+        $stderrLines[25] | Should Be '[TRUNCATED: 19950 lines omitted]'
+        $stdoutLines[0] | Should Be 'out-1'
+        $stdoutLines[50] | Should Be 'out-20000'
+        $result.StdOut | Should Not Match 'out-10000'
+        $result.StdErr | Should Not Match 'err-10000'
+    }
+
+    It 'does not buffer complete process streams before truncating them' {
+        $source = Get-Content -LiteralPath $commonLibrary -Raw
+
+        $source | Should Not Match 'ReadToEnd'
+    }
+
+    It 'bounds a single oversized output line' {
+        $result = Invoke-ManagedProcess -FilePath $pythonPath -Arguments @(
+            $pythonChildScript, 'long-line'
+        ) -TimeoutSeconds 10
+
+        ($result.StdOut.Length -lt 5000) | Should Be $true
+        $result.StdOut.StartsWith('a' * 2048) | Should Be $true
+        $result.StdOut | Should Match '\[TRUNCATED: 95904 chars omitted\]'
+        $result.StdOut.EndsWith('z' * 2048) | Should Be $true
+    }
+
+    It 'returns invalid UTF-8 as replacement text for a non-zero exit' {
+        $result = Invoke-ManagedProcess -FilePath $pythonPath -Arguments @(
+            $pythonChildScript, 'invalid-utf8'
+        ) -TimeoutSeconds 10
+
+        $replacement = [char]0xFFFD
+        $result.ExitCode | Should Be 7
+        $result.Succeeded | Should Be $false
+        $result.StdOut | Should Match ([regex]::Escape($replacement))
+        $result.StdErr | Should Match ([regex]::Escape($replacement))
     }
 
     It 'throws when the executable cannot be started' {
