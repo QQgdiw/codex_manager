@@ -7,6 +7,368 @@ if (-not ('Security.Cryptography.ProtectedData' -as [type])) {
     Add-Type -AssemblyName System.Security
 }
 
+if (-not ('ManagedCredentialPathRuntime' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+public static class ManagedCredentialPathRuntime
+{
+    private const uint FileReadAttributes = 0x80;
+    private const uint FileShareRead = 0x1;
+    private const uint FileShareWrite = 0x2;
+    private const uint FileShareDelete = 0x4;
+    private const uint OpenExisting = 3;
+    private const uint FileFlagBackupSemantics = 0x02000000;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(
+        string fileName,
+        uint desiredAccess,
+        uint shareMode,
+        IntPtr securityAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile
+    );
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(
+        SafeFileHandle file,
+        StringBuilder path,
+        uint pathLength,
+        uint flags
+    );
+
+    public static string GetFinalDirectoryPath(string path)
+    {
+        using (SafeFileHandle handle = CreateFile(
+            path,
+            FileReadAttributes,
+            FileShareRead | FileShareWrite | FileShareDelete,
+            IntPtr.Zero,
+            OpenExisting,
+            FileFlagBackupSemantics,
+            IntPtr.Zero
+        ))
+        {
+            if (handle.IsInvalid)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+
+            StringBuilder result = new StringBuilder(32768);
+            uint length = GetFinalPathNameByHandle(
+                handle,
+                result,
+                (uint)result.Capacity,
+                0
+            );
+            if (length == 0 || length >= result.Capacity)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+
+            string finalPath = result.ToString();
+            if (finalPath.StartsWith(@"\\?\UNC\", StringComparison.Ordinal))
+            {
+                return @"\\" + finalPath.Substring(8);
+            }
+            if (finalPath.StartsWith(@"\\?\", StringComparison.Ordinal))
+            {
+                return finalPath.Substring(4);
+            }
+            return finalPath;
+        }
+    }
+}
+'@
+}
+
+if (-not ('ManagedCredentialJsonRuntime' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
+
+public sealed class ManagedCredentialJsonRuntime
+{
+    private readonly string text;
+    private int index;
+    private bool duplicateFound;
+
+    private ManagedCredentialJsonRuntime(string json)
+    {
+        if (json == null)
+        {
+            throw new ArgumentNullException("json");
+        }
+        text = json;
+    }
+
+    public static bool HasDuplicateProperties(string json)
+    {
+        ManagedCredentialJsonRuntime parser =
+            new ManagedCredentialJsonRuntime(json);
+        parser.ParseValue();
+        parser.SkipWhitespace();
+        if (parser.index != parser.text.Length)
+        {
+            throw new FormatException();
+        }
+        return parser.duplicateFound;
+    }
+
+    private void ParseValue()
+    {
+        SkipWhitespace();
+        if (index >= text.Length)
+        {
+            throw new FormatException();
+        }
+
+        switch (text[index])
+        {
+            case '{':
+                ParseObject();
+                return;
+            case '[':
+                ParseArray();
+                return;
+            case '"':
+                ParseString();
+                return;
+            case 't':
+                ParseLiteral("true");
+                return;
+            case 'f':
+                ParseLiteral("false");
+                return;
+            case 'n':
+                ParseLiteral("null");
+                return;
+            default:
+                ParseNumber();
+                return;
+        }
+    }
+
+    private void ParseObject()
+    {
+        index++;
+        SkipWhitespace();
+        HashSet<string> names = new HashSet<string>(StringComparer.Ordinal);
+        if (Consume('}'))
+        {
+            return;
+        }
+
+        while (true)
+        {
+            SkipWhitespace();
+            string name = ParseString();
+            if (!names.Add(name))
+            {
+                duplicateFound = true;
+            }
+            SkipWhitespace();
+            Require(':');
+            ParseValue();
+            SkipWhitespace();
+            if (Consume('}'))
+            {
+                return;
+            }
+            Require(',');
+        }
+    }
+
+    private void ParseArray()
+    {
+        index++;
+        SkipWhitespace();
+        if (Consume(']'))
+        {
+            return;
+        }
+
+        while (true)
+        {
+            ParseValue();
+            SkipWhitespace();
+            if (Consume(']'))
+            {
+                return;
+            }
+            Require(',');
+        }
+    }
+
+    private string ParseString()
+    {
+        Require('"');
+        StringBuilder value = new StringBuilder();
+        while (index < text.Length)
+        {
+            char character = text[index++];
+            if (character == '"')
+            {
+                return value.ToString();
+            }
+            if (character < 0x20)
+            {
+                throw new FormatException();
+            }
+            if (character != '\\')
+            {
+                value.Append(character);
+                continue;
+            }
+            if (index >= text.Length)
+            {
+                throw new FormatException();
+            }
+
+            char escape = text[index++];
+            switch (escape)
+            {
+                case '"': value.Append('"'); break;
+                case '\\': value.Append('\\'); break;
+                case '/': value.Append('/'); break;
+                case 'b': value.Append('\b'); break;
+                case 'f': value.Append('\f'); break;
+                case 'n': value.Append('\n'); break;
+                case 'r': value.Append('\r'); break;
+                case 't': value.Append('\t'); break;
+                case 'u':
+                    if (index + 4 > text.Length)
+                    {
+                        throw new FormatException();
+                    }
+                    int codePoint;
+                    if (!Int32.TryParse(
+                        text.Substring(index, 4),
+                        NumberStyles.AllowHexSpecifier,
+                        CultureInfo.InvariantCulture,
+                        out codePoint
+                    ))
+                    {
+                        throw new FormatException();
+                    }
+                    value.Append((char)codePoint);
+                    index += 4;
+                    break;
+                default:
+                    throw new FormatException();
+            }
+        }
+        throw new FormatException();
+    }
+
+    private void ParseNumber()
+    {
+        int start = index;
+        if (Consume('-'))
+        {
+            if (index >= text.Length)
+            {
+                throw new FormatException();
+            }
+        }
+
+        if (Consume('0'))
+        {
+        }
+        else
+        {
+            RequireDigits();
+        }
+
+        if (Consume('.'))
+        {
+            RequireDigits();
+        }
+        if (index < text.Length && (text[index] == 'e' || text[index] == 'E'))
+        {
+            index++;
+            if (index < text.Length && (text[index] == '+' || text[index] == '-'))
+            {
+                index++;
+            }
+            RequireDigits();
+        }
+        if (index == start)
+        {
+            throw new FormatException();
+        }
+    }
+
+    private void RequireDigits()
+    {
+        int start = index;
+        while (index < text.Length && Char.IsDigit(text[index]))
+        {
+            index++;
+        }
+        if (index == start)
+        {
+            throw new FormatException();
+        }
+    }
+
+    private void ParseLiteral(string literal)
+    {
+        if (
+            index + literal.Length > text.Length ||
+            !String.Equals(
+                text.Substring(index, literal.Length),
+                literal,
+                StringComparison.Ordinal
+            )
+        )
+        {
+            throw new FormatException();
+        }
+        index += literal.Length;
+    }
+
+    private bool Consume(char expected)
+    {
+        if (index < text.Length && text[index] == expected)
+        {
+            index++;
+            return true;
+        }
+        return false;
+    }
+
+    private void Require(char expected)
+    {
+        if (!Consume(expected))
+        {
+            throw new FormatException();
+        }
+    }
+
+    private void SkipWhitespace()
+    {
+        while (
+            index < text.Length &&
+            (text[index] == ' ' || text[index] == '\t' ||
+             text[index] == '\r' || text[index] == '\n')
+        )
+        {
+            index++;
+        }
+    }
+}
+'@
+}
+
 function Assert-ManagedCredentialName {
     param(
         [Parameter(Mandatory = $true)]
@@ -54,7 +416,9 @@ function Protect-CredentialStoreDirectory {
     )
 
     try {
-        $directory = Split-Path -Parent $StorePath
+        $directory = [ManagedCredentialPathRuntime]::GetFinalDirectoryPath(
+            (Split-Path -Parent $StorePath)
+        )
         if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
             New-Item -ItemType Directory -Path $directory -Force `
                 -ErrorAction Stop | Out-Null
@@ -137,6 +501,128 @@ function Protect-CredentialStoreDirectory {
     }
 }
 
+function Assert-CredentialStoreDirectorySecure {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$StorePath
+    )
+
+    try {
+        $directory = [ManagedCredentialPathRuntime]::GetFinalDirectoryPath(
+            (Split-Path -Parent $StorePath)
+        )
+        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $systemSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
+        $security = [IO.Directory]::GetAccessControl(
+            $directory,
+            [Security.AccessControl.AccessControlSections]::Access
+        )
+        if (-not $security.AreAccessRulesProtected) {
+            throw 'invalid'
+        }
+
+        $rules = @($security.GetAccessRules(
+            $true,
+            $true,
+            [Security.Principal.SecurityIdentifier]
+        ))
+        if (@($rules | Where-Object { $_.IsInherited }).Count -ne 0) {
+            throw 'invalid'
+        }
+        if (@($rules | Where-Object {
+            $_.AccessControlType -eq (
+                [Security.AccessControl.AccessControlType]::Allow
+            ) -and
+            $_.IdentityReference -ne $currentSid -and
+            $_.IdentityReference -ne $systemSid
+        }).Count -ne 0) {
+            throw 'invalid'
+        }
+        if (@($rules | Where-Object {
+            $_.AccessControlType -eq (
+                [Security.AccessControl.AccessControlType]::Deny
+            ) -and (
+                $_.IdentityReference -eq $currentSid -or
+                $_.IdentityReference -eq $systemSid
+            )
+        }).Count -ne 0) {
+            throw 'invalid'
+        }
+        foreach ($sid in @($currentSid, $systemSid)) {
+            $fullControlRules = @($rules | Where-Object {
+                $_.AccessControlType -eq (
+                    [Security.AccessControl.AccessControlType]::Allow
+                ) -and
+                $_.IdentityReference -eq $sid -and
+                ($_.FileSystemRights -band (
+                    [Security.AccessControl.FileSystemRights]::FullControl
+                )) -eq (
+                    [Security.AccessControl.FileSystemRights]::FullControl
+                )
+            })
+            if ($fullControlRules.Count -eq 0) {
+                throw 'invalid'
+            }
+        }
+    }
+    catch {
+        throw 'Credential store directory permissions could not be secured.'
+    }
+}
+
+function Protect-CredentialStoreFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    try {
+        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $systemSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
+        $security = New-Object Security.AccessControl.FileSecurity
+        $security.SetAccessRuleProtection($true, $false)
+        foreach ($sid in @($currentSid, $systemSid)) {
+            $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+                $sid,
+                [Security.AccessControl.FileSystemRights]::FullControl,
+                [Security.AccessControl.AccessControlType]::Allow
+            )
+            $security.AddAccessRule($rule)
+        }
+        [IO.File]::SetAccessControl($Path, $security)
+
+        $verified = [IO.File]::GetAccessControl(
+            $Path,
+            [Security.AccessControl.AccessControlSections]::Access
+        )
+        $rules = @($verified.GetAccessRules(
+            $true,
+            $true,
+            [Security.Principal.SecurityIdentifier]
+        ))
+        if (-not $verified.AreAccessRulesProtected -or $rules.Count -ne 2) {
+            throw 'invalid'
+        }
+        foreach ($sid in @($currentSid, $systemSid)) {
+            if (@($rules | Where-Object {
+                $_.IdentityReference -eq $sid -and
+                $_.AccessControlType -eq (
+                    [Security.AccessControl.AccessControlType]::Allow
+                ) -and
+                $_.FileSystemRights -eq (
+                    [Security.AccessControl.FileSystemRights]::FullControl
+                ) -and
+                -not $_.IsInherited
+            }).Count -ne 1) {
+                throw 'invalid'
+            }
+        }
+    }
+    catch {
+        throw 'Credential store file permissions could not be secured.'
+    }
+}
+
 function Initialize-CredentialStoreDirectory {
     param(
         [Parameter(Mandatory = $true)]
@@ -145,16 +631,19 @@ function Initialize-CredentialStoreDirectory {
 
     try {
         $directory = Split-Path -Parent $StorePath
+        $created = $false
         if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
             if (Test-Path -LiteralPath $directory) {
                 throw 'invalid'
             }
             New-Item -ItemType Directory -Path $directory -Force `
                 -ErrorAction Stop | Out-Null
+            $created = $true
         }
         if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
             throw 'invalid'
         }
+        return $created
     }
     catch {
         throw 'Credential store directory permissions could not be secured.'
@@ -170,7 +659,14 @@ function Invoke-WithCredentialStoreLock {
         [scriptblock]$Action
     )
 
-    Initialize-CredentialStoreDirectory -StorePath $StorePath
+    $directoryCreated = Initialize-CredentialStoreDirectory -StorePath $StorePath
+    if ($directoryCreated) {
+        Protect-CredentialStoreDirectory -StorePath $StorePath
+    }
+    else {
+        Assert-CredentialStoreDirectorySecure -StorePath $StorePath
+    }
+
     $lockPath = $StorePath + '.lock'
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     $lockStream = $null
@@ -195,7 +691,11 @@ function Invoke-WithCredentialStoreLock {
             }
         }
 
-        Protect-CredentialStoreDirectory -StorePath $StorePath
+        Assert-CredentialStoreDirectorySecure -StorePath $StorePath
+        Protect-CredentialStoreFile -Path $lockPath
+        if (Test-Path -LiteralPath $StorePath -PathType Leaf) {
+            Protect-CredentialStoreFile -Path $StorePath
+        }
         return & $Action
     }
     finally {
@@ -242,6 +742,29 @@ function New-EmptyCredentialStore {
     }
 }
 
+function ConvertFrom-CredentialStoreTimestamp {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    $parsed = [DateTime]::MinValue
+    $styles = (
+        [Globalization.DateTimeStyles]::AssumeUniversal -bor
+        [Globalization.DateTimeStyles]::AdjustToUniversal
+    )
+    if (-not [DateTime]::TryParseExact(
+        $Value,
+        'yyyy-MM-ddTHH:mm:ss.fffffffZ',
+        [Globalization.CultureInfo]::InvariantCulture,
+        $styles,
+        [ref]$parsed
+    )) {
+        throw 'invalid'
+    }
+    return $parsed
+}
+
 function Read-CredentialStore {
     param(
         [Parameter(Mandatory = $true)]
@@ -253,7 +776,11 @@ function Read-CredentialStore {
     }
 
     try {
-        $document = [IO.File]::ReadAllText($StorePath) | ConvertFrom-Json
+        $json = [IO.File]::ReadAllText($StorePath)
+        if ([ManagedCredentialJsonRuntime]::HasDuplicateProperties($json)) {
+            throw 'invalid'
+        }
+        $document = $json | ConvertFrom-Json
         if ($null -eq $document -or $document -isnot [pscustomobject]) {
             throw 'invalid'
         }
@@ -306,14 +833,13 @@ function Read-CredentialStore {
                 throw 'invalid'
             }
             [void][Convert]::FromBase64String($credential.ciphertext)
-            [void][DateTimeOffset]::Parse(
-                $credential.created_at,
-                [Globalization.CultureInfo]::InvariantCulture
-            )
-            [void][DateTimeOffset]::Parse(
-                $credential.updated_at,
-                [Globalization.CultureInfo]::InvariantCulture
-            )
+            $createdAt = ConvertFrom-CredentialStoreTimestamp `
+                -Value $credential.created_at
+            $updatedAt = ConvertFrom-CredentialStoreTimestamp `
+                -Value $credential.updated_at
+            if ($createdAt -gt $updatedAt) {
+                throw 'invalid'
+            }
         }
 
         $document.credentials = @($document.credentials)
@@ -357,6 +883,7 @@ function Write-CredentialStore {
         else {
             [IO.File]::Move($temporaryPath, $StorePath)
         }
+        Protect-CredentialStoreFile -Path $StorePath
     }
     finally {
         if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
@@ -554,14 +1081,10 @@ function Get-ManagedCredentialMetadata {
         return @($document.credentials | ForEach-Object {
             [pscustomobject][ordered]@{
                 Name = $_.name
-                CreatedAt = [DateTimeOffset]::Parse(
-                    $_.created_at,
-                    [Globalization.CultureInfo]::InvariantCulture
-                ).UtcDateTime
-                UpdatedAt = [DateTimeOffset]::Parse(
-                    $_.updated_at,
-                    [Globalization.CultureInfo]::InvariantCulture
-                ).UtcDateTime
+                CreatedAt = ConvertFrom-CredentialStoreTimestamp `
+                    -Value $_.created_at
+                UpdatedAt = ConvertFrom-CredentialStoreTimestamp `
+                    -Value $_.updated_at
             }
         })
     }
