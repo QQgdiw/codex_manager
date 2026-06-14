@@ -2,6 +2,7 @@ $script:DefaultCredentialStorePath = Join-Path (
     Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 ) '.secrets\credentials.dpapi'
 $script:CredentialStoreSchemaVersion = '1'
+$script:CredentialStoreUtcNowProvider = $null
 
 if (-not ('Security.Cryptography.ProtectedData' -as [type])) {
     Add-Type -AssemblyName System.Security
@@ -409,96 +410,96 @@ function Resolve-CredentialStorePath {
     return [IO.Path]::GetFullPath($StorePath)
 }
 
-function Protect-CredentialStoreDirectory {
+function Assert-CredentialSecurityOwnerAllowed {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$StorePath
+        [Security.AccessControl.ObjectSecurity]$Security
     )
 
-    try {
-        $directory = [ManagedCredentialPathRuntime]::GetFinalDirectoryPath(
-            (Split-Path -Parent $StorePath)
-        )
-        if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
-            New-Item -ItemType Directory -Path $directory -Force `
-                -ErrorAction Stop | Out-Null
-        }
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $systemSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
+    $ownerSid = $Security.GetOwner(
+        [Security.Principal.SecurityIdentifier]
+    )
+    if ($ownerSid -ne $currentSid -and $ownerSid -ne $systemSid) {
+        throw 'Credential store owner is invalid.'
+    }
+}
 
-        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-        $systemSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
-        $inheritance = (
-            [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
-            [Security.AccessControl.InheritanceFlags]::ObjectInherit
-        )
-        $security = [IO.Directory]::GetAccessControl(
-            $directory,
-            [Security.AccessControl.AccessControlSections]::Access
-        )
-        $security.SetAccessRuleProtection($true, $false)
-        $existingRules = @($security.GetAccessRules(
-            $true,
-            $false,
-            [Security.Principal.SecurityIdentifier]
-        ))
-        foreach ($existingSid in @(
-            $existingRules |
-                ForEach-Object { $_.IdentityReference.Value } |
-                Select-Object -Unique
-        )) {
-            $security.PurgeAccessRules(
-                (New-Object Security.Principal.SecurityIdentifier($existingSid))
-            )
-        }
-        foreach ($sid in @($currentSid, $systemSid)) {
-            $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+function Get-CredentialEffectivePrincipalSidSet {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $sidSet = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::OrdinalIgnoreCase
+    )
+    [void]$sidSet.Add($identity.User.Value)
+    foreach ($groupSid in $identity.Groups) {
+        [void]$sidSet.Add($groupSid.Value)
+    }
+    [void]$sidSet.Add('S-1-5-18')
+    return $sidSet
+}
+
+function Test-CredentialSecurityHasEffectiveDeny {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Security.AccessControl.ObjectSecurity]$Security
+    )
+
+    $effectiveSids = Get-CredentialEffectivePrincipalSidSet
+    $rules = @($Security.GetAccessRules(
+        $true,
+        $true,
+        [Security.Principal.SecurityIdentifier]
+    ))
+    return @($rules | Where-Object {
+        $_.AccessControlType -eq (
+            [Security.AccessControl.AccessControlType]::Deny
+        ) -and
+        [long]$_.FileSystemRights -ne 0 -and
+        $effectiveSids.Contains($_.IdentityReference.Value)
+    }).Count -gt 0
+}
+
+function New-CredentialDirectorySecurity {
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $systemSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
+    $inheritance = (
+        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+        [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    )
+    $security = New-Object Security.AccessControl.DirectorySecurity
+    $security.SetOwner($currentSid)
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($sid in @($currentSid, $systemSid)) {
+        $security.AddAccessRule(
+            (New-Object Security.AccessControl.FileSystemAccessRule(
                 $sid,
                 [Security.AccessControl.FileSystemRights]::FullControl,
                 $inheritance,
                 [Security.AccessControl.PropagationFlags]::None,
                 [Security.AccessControl.AccessControlType]::Allow
-            )
-            $security.AddAccessRule($rule)
-        }
-        [IO.Directory]::SetAccessControl($directory, $security)
-
-        $verified = [IO.Directory]::GetAccessControl(
-            $directory,
-            [Security.AccessControl.AccessControlSections]::Access
+            ))
         )
-        if (-not $verified.AreAccessRulesProtected) {
-            throw 'invalid'
-        }
-        $rules = @($verified.GetAccessRules(
-            $true,
-            $true,
-            [Security.Principal.SecurityIdentifier]
-        ))
-        if ($rules.Count -ne 2) {
-            throw 'invalid'
-        }
-        foreach ($sid in @($currentSid, $systemSid)) {
-            $matchingRules = @($rules | Where-Object {
-                $_.IdentityReference -eq $sid -and
-                $_.AccessControlType -eq (
-                    [Security.AccessControl.AccessControlType]::Allow
-                ) -and
-                $_.FileSystemRights -eq (
-                    [Security.AccessControl.FileSystemRights]::FullControl
-                ) -and
-                $_.InheritanceFlags -eq $inheritance -and
-                $_.PropagationFlags -eq (
-                    [Security.AccessControl.PropagationFlags]::None
-                ) -and
-                -not $_.IsInherited
-            })
-            if ($matchingRules.Count -ne 1) {
-                throw 'invalid'
-            }
-        }
     }
-    catch {
-        throw 'Credential store directory permissions could not be secured.'
+    return $security
+}
+
+function New-CredentialFileSecurity {
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $systemSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
+    $security = New-Object Security.AccessControl.FileSecurity
+    $security.SetOwner($currentSid)
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($sid in @($currentSid, $systemSid)) {
+        $security.AddAccessRule(
+            (New-Object Security.AccessControl.FileSystemAccessRule(
+                $sid,
+                [Security.AccessControl.FileSystemRights]::FullControl,
+                [Security.AccessControl.AccessControlType]::Allow
+            ))
+        )
     }
+    return $security
 }
 
 function Assert-CredentialStoreDirectorySecure {
@@ -515,8 +516,12 @@ function Assert-CredentialStoreDirectorySecure {
         $systemSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
         $security = [IO.Directory]::GetAccessControl(
             $directory,
-            [Security.AccessControl.AccessControlSections]::Access
+            (
+                [Security.AccessControl.AccessControlSections]::Access -bor
+                [Security.AccessControl.AccessControlSections]::Owner
+            )
         )
+        Assert-CredentialSecurityOwnerAllowed -Security $security
         if (-not $security.AreAccessRulesProtected) {
             throw 'invalid'
         }
@@ -538,14 +543,7 @@ function Assert-CredentialStoreDirectorySecure {
         }).Count -ne 0) {
             throw 'invalid'
         }
-        if (@($rules | Where-Object {
-            $_.AccessControlType -eq (
-                [Security.AccessControl.AccessControlType]::Deny
-            ) -and (
-                $_.IdentityReference -eq $currentSid -or
-                $_.IdentityReference -eq $systemSid
-            )
-        }).Count -ne 0) {
+        if (Test-CredentialSecurityHasEffectiveDeny -Security $security) {
             throw 'invalid'
         }
         foreach ($sid in @($currentSid, $systemSid)) {
@@ -573,7 +571,9 @@ function Assert-CredentialStoreDirectorySecure {
 function Protect-CredentialStoreFile {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Path
+        [string]$Path,
+
+        [switch]$RequireCurrentOwner
     )
 
     try {
@@ -593,8 +593,19 @@ function Protect-CredentialStoreFile {
 
         $verified = [IO.File]::GetAccessControl(
             $Path,
-            [Security.AccessControl.AccessControlSections]::Access
+            (
+                [Security.AccessControl.AccessControlSections]::Access -bor
+                [Security.AccessControl.AccessControlSections]::Owner
+            )
         )
+        Assert-CredentialSecurityOwnerAllowed -Security $verified
+        if ($RequireCurrentOwner -and (
+            $verified.GetOwner(
+                [Security.Principal.SecurityIdentifier]
+            ) -ne $currentSid
+        )) {
+            throw 'invalid'
+        }
         $rules = @($verified.GetAccessRules(
             $true,
             $true,
@@ -623,6 +634,30 @@ function Protect-CredentialStoreFile {
     }
 }
 
+function Assert-CredentialStoreFileSecure {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    try {
+        $security = [IO.File]::GetAccessControl(
+            $Path,
+            (
+                [Security.AccessControl.AccessControlSections]::Access -bor
+                [Security.AccessControl.AccessControlSections]::Owner
+            )
+        )
+        Assert-CredentialSecurityOwnerAllowed -Security $security
+        if (Test-CredentialSecurityHasEffectiveDeny -Security $security) {
+            throw 'invalid'
+        }
+    }
+    catch {
+        throw 'Credential store file permissions could not be secured.'
+    }
+}
+
 function Initialize-CredentialStoreDirectory {
     param(
         [Parameter(Mandatory = $true)]
@@ -636,8 +671,8 @@ function Initialize-CredentialStoreDirectory {
             if (Test-Path -LiteralPath $directory) {
                 throw 'invalid'
             }
-            New-Item -ItemType Directory -Path $directory -Force `
-                -ErrorAction Stop | Out-Null
+            $security = New-CredentialDirectorySecurity
+            [IO.Directory]::CreateDirectory($directory, $security) | Out-Null
             $created = $true
         }
         if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
@@ -650,6 +685,42 @@ function Initialize-CredentialStoreDirectory {
     }
 }
 
+function Initialize-CredentialStoreLockFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LockPath
+    )
+
+    if (Test-Path -LiteralPath $LockPath -PathType Leaf) {
+        return $false
+    }
+
+    $stream = $null
+    try {
+        $security = New-CredentialFileSecurity
+        try {
+            $stream = New-Object IO.FileStream -ArgumentList @(
+                $LockPath,
+                [IO.FileMode]::CreateNew,
+                [Security.AccessControl.FileSystemRights]::FullControl,
+                [IO.FileShare]::None,
+                4096,
+                [IO.FileOptions]::None,
+                $security
+            )
+            return $true
+        }
+        catch [IO.IOException] {
+            return $false
+        }
+    }
+    finally {
+        if ($null -ne $stream) {
+            $stream.Dispose()
+        }
+    }
+}
+
 function Invoke-WithCredentialStoreLock {
     param(
         [Parameter(Mandatory = $true)]
@@ -659,15 +730,11 @@ function Invoke-WithCredentialStoreLock {
         [scriptblock]$Action
     )
 
-    $directoryCreated = Initialize-CredentialStoreDirectory -StorePath $StorePath
-    if ($directoryCreated) {
-        Protect-CredentialStoreDirectory -StorePath $StorePath
-    }
-    else {
-        Assert-CredentialStoreDirectorySecure -StorePath $StorePath
-    }
+    [void](Initialize-CredentialStoreDirectory -StorePath $StorePath)
+    Assert-CredentialStoreDirectorySecure -StorePath $StorePath
 
     $lockPath = $StorePath + '.lock'
+    $lockCreated = Initialize-CredentialStoreLockFile -LockPath $lockPath
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     $lockStream = $null
     try {
@@ -692,8 +759,13 @@ function Invoke-WithCredentialStoreLock {
         }
 
         Assert-CredentialStoreDirectorySecure -StorePath $StorePath
-        Protect-CredentialStoreFile -Path $lockPath
+        if (Test-Path -LiteralPath $lockPath -PathType Leaf) {
+            Assert-CredentialStoreFileSecure -Path $lockPath
+        }
+        Protect-CredentialStoreFile -Path $lockPath `
+            -RequireCurrentOwner:$lockCreated
         if (Test-Path -LiteralPath $StorePath -PathType Leaf) {
+            Assert-CredentialStoreFileSecure -Path $StorePath
             Protect-CredentialStoreFile -Path $StorePath
         }
         return & $Action
@@ -763,6 +835,19 @@ function ConvertFrom-CredentialStoreTimestamp {
         throw 'invalid'
     }
     return $parsed
+}
+
+function Get-CredentialStoreUtcNow {
+    $value = if ($null -ne $script:CredentialStoreUtcNowProvider) {
+        & $script:CredentialStoreUtcNowProvider
+    }
+    else {
+        [DateTime]::UtcNow
+    }
+    if ($value -isnot [DateTime]) {
+        throw 'Credential store clock is invalid.'
+    }
+    return $value.ToUniversalTime()
 }
 
 function Read-CredentialStore {
@@ -860,11 +945,6 @@ function Write-CredentialStore {
     )
 
     $directory = Split-Path -Parent $StorePath
-    if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
-        New-Item -ItemType Directory -Path $directory -Force -ErrorAction Stop |
-            Out-Null
-    }
-
     $temporaryPath = Join-Path $directory (
         ([IO.Path]::GetFileName($StorePath)) + '.tmp-' +
         [Guid]::NewGuid().ToString('N')
@@ -874,16 +954,37 @@ function Write-CredentialStore {
         [Guid]::NewGuid().ToString('N')
     )
     $utf8WithoutBom = New-Object Text.UTF8Encoding($false)
+    $storeExisted = Test-Path -LiteralPath $StorePath -PathType Leaf
     try {
         $json = $Document | ConvertTo-Json -Depth 4
-        [IO.File]::WriteAllText($temporaryPath, $json, $utf8WithoutBom)
-        if (Test-Path -LiteralPath $StorePath -PathType Leaf) {
+        $bytes = $utf8WithoutBom.GetBytes($json)
+        $temporarySecurity = New-CredentialFileSecurity
+        $temporaryStream = New-Object IO.FileStream -ArgumentList @(
+            $temporaryPath,
+            [IO.FileMode]::CreateNew,
+            [Security.AccessControl.FileSystemRights]::FullControl,
+            [IO.FileShare]::None,
+            4096,
+            [IO.FileOptions]::WriteThrough,
+            $temporarySecurity
+        )
+        try {
+            $temporaryStream.Write($bytes, 0, $bytes.Length)
+            $temporaryStream.Flush($true)
+        }
+        finally {
+            $temporaryStream.Dispose()
+            [Array]::Clear($bytes, 0, $bytes.Length)
+        }
+
+        if ($storeExisted) {
             [IO.File]::Replace($temporaryPath, $StorePath, $backupPath, $true)
         }
         else {
             [IO.File]::Move($temporaryPath, $StorePath)
         }
-        Protect-CredentialStoreFile -Path $StorePath
+        Protect-CredentialStoreFile -Path $StorePath `
+            -RequireCurrentOwner:(-not $storeExisted)
     }
     finally {
         if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
@@ -996,23 +1097,36 @@ function Set-ManagedCredential {
 
     Invoke-WithCredentialStoreLock -StorePath $resolvedPath -Action {
         $document = Read-CredentialStore -StorePath $resolvedPath
-        $now = [DateTime]::UtcNow.ToString(
-            'o',
-            [Globalization.CultureInfo]::InvariantCulture
-        )
+        $now = Get-CredentialStoreUtcNow
         $existing = @($document.credentials | Where-Object {
             Test-ManagedCredentialNameEqual -Left $_.name -Right $Name
         })
         if ($existing.Count -eq 1) {
+            $createdAt = ConvertFrom-CredentialStoreTimestamp `
+                -Value $existing[0].created_at
+            $previousUpdatedAt = ConvertFrom-CredentialStoreTimestamp `
+                -Value $existing[0].updated_at
+            $effectiveUpdatedAt = @(
+                $now,
+                $createdAt,
+                $previousUpdatedAt
+            ) | Sort-Object -Descending | Select-Object -First 1
             $existing[0].ciphertext = $ciphertext
-            $existing[0].updated_at = $now
+            $existing[0].updated_at = $effectiveUpdatedAt.ToString(
+                'o',
+                [Globalization.CultureInfo]::InvariantCulture
+            )
         }
         else {
+            $timestamp = $now.ToString(
+                'o',
+                [Globalization.CultureInfo]::InvariantCulture
+            )
             $document.credentials += [pscustomobject][ordered]@{
                 name = $Name
                 ciphertext = $ciphertext
-                created_at = $now
-                updated_at = $now
+                created_at = $timestamp
+                updated_at = $timestamp
             }
         }
         Write-CredentialStore -StorePath $resolvedPath -Document $document

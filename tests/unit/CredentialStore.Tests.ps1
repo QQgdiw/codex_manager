@@ -40,7 +40,8 @@ function Get-TestExceptionMessage {
 function Set-TestSecureDirectoryAcl {
     param(
         [string]$Path,
-        [switch]$AddSentinelDeny
+        [switch]$AddSentinelDeny,
+        [Security.Principal.SecurityIdentifier]$DenySid
     )
 
     New-Item -ItemType Directory -Path $Path -Force | Out-Null
@@ -63,11 +64,13 @@ function Set-TestSecureDirectoryAcl {
         $security.AddAccessRule($rule)
     }
     if ($AddSentinelDeny) {
-        $sentinelSid = New-Object Security.Principal.SecurityIdentifier(
+        $DenySid = New-Object Security.Principal.SecurityIdentifier(
             'S-1-5-21-111111111-222222222-333333333-4444'
         )
+    }
+    if ($null -ne $DenySid) {
         $sentinelRule = New-Object Security.AccessControl.FileSystemAccessRule(
-            $sentinelSid,
+            $DenySid,
             [Security.AccessControl.FileSystemRights]::WriteAttributes,
             $inheritance,
             [Security.AccessControl.PropagationFlags]::None,
@@ -81,12 +84,34 @@ function Set-TestSecureDirectoryAcl {
 function Get-TestAccessSddl {
     param([string]$Path)
 
+    $sections = (
+        [Security.AccessControl.AccessControlSections]::Access -bor
+        [Security.AccessControl.AccessControlSections]::Owner
+    )
     return [IO.Directory]::GetAccessControl(
         $Path,
-        [Security.AccessControl.AccessControlSections]::Access
+        $sections
     ).GetSecurityDescriptorSddlForm(
-        [Security.AccessControl.AccessControlSections]::Access
+        $sections
     )
+}
+
+function Get-TestOwnerSid {
+    param(
+        [string]$Path,
+        [switch]$File
+    )
+
+    $sections = [Security.AccessControl.AccessControlSections]::Owner
+    $security = if ($File) {
+        [IO.File]::GetAccessControl($Path, $sections)
+    }
+    else {
+        [IO.Directory]::GetAccessControl($Path, $sections)
+    }
+    return $security.GetOwner(
+        [Security.Principal.SecurityIdentifier]
+    ).Value
 }
 
 function Assert-TestFileAclIsSecure {
@@ -96,7 +121,10 @@ function Assert-TestFileAclIsSecure {
     $systemSid = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
     $security = [IO.File]::GetAccessControl(
         $Path,
-        [Security.AccessControl.AccessControlSections]::Access
+        (
+            [Security.AccessControl.AccessControlSections]::Access -bor
+            [Security.AccessControl.AccessControlSections]::Owner
+        )
     )
     $rules = @($security.GetAccessRules(
         $true,
@@ -104,6 +132,8 @@ function Assert-TestFileAclIsSecure {
         [Security.Principal.SecurityIdentifier]
     ))
     $security.AreAccessRulesProtected | Should Be $true
+    $security.GetOwner([Security.Principal.SecurityIdentifier]) |
+        Should Be $currentSid
     $rules.Count | Should Be 2
     foreach ($sid in @($currentSid, $systemSid)) {
         @($rules | Where-Object {
@@ -239,6 +269,7 @@ Describe 'CredentialStore' {
         $script:storePath = Join-Path $script:caseRoot 'credentials.dpapi'
         $script:secretText = New-TestSecretText
         $script:secret = ConvertTo-SecureString $script:secretText -AsPlainText -Force
+        $script:CredentialStoreUtcNowProvider = $null
     }
 
     It 'encrypts and decrypts a credential for the current user' {
@@ -302,6 +333,35 @@ Describe 'CredentialStore' {
         (ConvertFrom-TestSecureString (
             Get-ManagedCredential -Name 'service-token' -StorePath $script:storePath
         )) | Should Be $replacementText
+    }
+
+    It 'keeps updated time monotonic when the clock moves backward' {
+        $script:CredentialStoreUtcNowProvider = {
+            [DateTime]::Parse(
+                '2030-01-02T03:04:05.0000000Z',
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind
+            )
+        }
+        Set-ManagedCredential -Name 'service-token' -Secret $script:secret `
+            -StorePath $script:storePath
+        $before = [IO.File]::ReadAllText($script:storePath) | ConvertFrom-Json
+        $replacement = ConvertTo-SecureString ($script:secretText + '-rollback') `
+            -AsPlainText -Force
+        $script:CredentialStoreUtcNowProvider = {
+            [DateTime]::Parse(
+                '2020-01-02T03:04:05.0000000Z',
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind
+            )
+        }
+
+        Set-ManagedCredential -Name 'service-token' -Secret $replacement `
+            -StorePath $script:storePath
+
+        $after = [IO.File]::ReadAllText($script:storePath) | ConvertFrom-Json
+        $after.credentials[0].created_at | Should Be $before.credentials[0].created_at
+        $after.credentials[0].updated_at | Should Be $before.credentials[0].updated_at
     }
 
     It 'matches credential names using OrdinalIgnoreCase and preserves the first name casing' {
@@ -662,6 +722,8 @@ Describe 'CredentialStore' {
         ))
 
         $acl.AreAccessRulesProtected | Should Be $true
+        $acl.GetOwner([Security.Principal.SecurityIdentifier]) |
+            Should Be $currentSid
         @($rules | Where-Object {
             $_.AccessControlType -eq 'Allow' -and
             $_.IdentityReference -ne $currentSid -and
@@ -693,6 +755,61 @@ Describe 'CredentialStore' {
             Should Be $beforeHash
     }
 
+    It 'rejects an external owner security descriptor' {
+        $security = New-Object Security.AccessControl.DirectorySecurity
+        $externalOwner = New-Object Security.Principal.SecurityIdentifier(
+            'S-1-5-32-545'
+        )
+        $security.SetOwner($externalOwner)
+
+        (Get-TestExceptionMessage {
+            Assert-CredentialSecurityOwnerAllowed -Security $security
+        }) | Should Be 'Credential store owner is invalid.'
+    }
+
+    It 'rejects an Everyone deny ACE without changing the existing directory ACL' {
+        $everyoneSid = New-Object Security.Principal.SecurityIdentifier('S-1-1-0')
+        Set-TestSecureDirectoryAcl -Path $script:caseRoot -DenySid $everyoneSid
+        $beforeSddl = Get-TestAccessSddl -Path $script:caseRoot
+
+        try {
+            $message = Get-TestExceptionMessage {
+                Set-ManagedCredential -Name 'service-token' -Secret $script:secret `
+                    -StorePath $script:storePath
+            }
+
+            $message | Should Be 'Credential store directory permissions could not be secured.'
+            (Get-TestAccessSddl -Path $script:caseRoot) | Should Be $beforeSddl
+            (Test-Path -LiteralPath $script:storePath) | Should Be $false
+        }
+        finally {
+            Set-TestSecureDirectoryAcl -Path $script:caseRoot
+        }
+    }
+
+    It 'rejects a current user group deny ACE without changing the existing directory ACL' {
+        $groupSid = @(
+            [Security.Principal.WindowsIdentity]::GetCurrent().Groups |
+                Where-Object { $_.Value -ne 'S-1-1-0' }
+        )[0]
+        Set-TestSecureDirectoryAcl -Path $script:caseRoot -DenySid $groupSid
+        $beforeSddl = Get-TestAccessSddl -Path $script:caseRoot
+
+        try {
+            $message = Get-TestExceptionMessage {
+                Set-ManagedCredential -Name 'service-token' -Secret $script:secret `
+                    -StorePath $script:storePath
+            }
+
+            $message | Should Be 'Credential store directory permissions could not be secured.'
+            (Get-TestAccessSddl -Path $script:caseRoot) | Should Be $beforeSddl
+            (Test-Path -LiteralPath $script:storePath) | Should Be $false
+        }
+        finally {
+            Set-TestSecureDirectoryAcl -Path $script:caseRoot
+        }
+    }
+
     It 'rejects an unsafe existing directory without changing its ACL' {
         New-Item -ItemType Directory -Path $script:caseRoot -Force | Out-Null
         $sentinelPath = Join-Path $script:caseRoot 'sentinel.txt'
@@ -716,6 +833,10 @@ Describe 'CredentialStore' {
 
         Assert-TestFileAclIsSecure -Path $script:storePath
         Assert-TestFileAclIsSecure -Path ($script:storePath + '.lock')
+        (Get-TestOwnerSid -Path $script:storePath -File) |
+            Should Be ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+        (Get-TestOwnerSid -Path ($script:storePath + '.lock') -File) |
+            Should Be ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
     }
 
     It 'fails Set with a stable secret-free error when directory security cannot be established' {
