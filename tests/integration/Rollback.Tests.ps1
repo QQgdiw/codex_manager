@@ -18,7 +18,7 @@ Describe 'Persistent rollback integration' {
             -AllowedRoots @($root) `
             -CodexRoot $codexRoot `
             -StateRoot $stateRoot
-        Add-FileChange -Journal $journal -Path $path -Kind modify
+        Add-FileChange -Journal $journal -Path $path -Kind modify -AllowedRoots @($root)
         [IO.File]::WriteAllText($path, 'changed')
 
         $reloaded = [pscustomobject]@{ JournalPath = $journal.JournalPath }
@@ -39,8 +39,9 @@ Describe 'Persistent rollback integration' {
             -AllowedRoots @($root) `
             -CodexRoot $codexRoot `
             -StateRoot $stateRoot
-        Add-FileChange -Journal $journal -Path $path -Kind create
+        Add-FileChange -Journal $journal -Path $path -Kind create -AllowedRoots @($root)
         [IO.File]::WriteAllText($path, 'created')
+        Confirm-FileChange -Journal $journal -Path $path -AllowedRoots @($root)
         $runner = Join-Path $root 'rollback-runner.ps1'
         $resultPath = Join-Path $root 'rollback-result.json'
         $runnerText = @'
@@ -68,5 +69,43 @@ if (@($result.Failed).Count -gt 0) { exit 1 }
         $exitCode | Should Be 0
         (Test-Path -LiteralPath $path) | Should Be $false
         (Test-Path -LiteralPath $resultPath -PathType Leaf) | Should Be $true
+    }
+
+    It 'does not lose entries from sixteen concurrent writers' {
+        $root = Join-Path $TestDrive 'concurrent'
+        $stateRoot = Join-Path $root '.state'
+        $codexRoot = Join-Path $root '.codex-test'
+        New-Item -ItemType Directory -Path $root, $codexRoot | Out-Null
+        $journal = New-ChangeJournal `
+            -OperationId 'concurrent-operation' `
+            -AllowedRoots @($root) `
+            -CodexRoot $codexRoot `
+            -StateRoot $stateRoot
+        $runner = Join-Path $root 'add-runner.ps1'
+        $runnerText = @'
+param([string]$Library, [string]$JournalPath, [string]$Description, [string]$AllowedRoot)
+. $Library
+$journal = [pscustomobject]@{ JournalPath = $JournalPath }
+Add-ExternalChange -Journal $journal -Description $Description -RollbackCommand '' -AllowedRoots @($AllowedRoot) | Out-Null
+'@
+        Set-Content -LiteralPath $runner -Value $runnerText -Encoding UTF8
+        $processes = @(
+            1..16 | ForEach-Object {
+                Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList @(
+                    '-NoProfile',
+                    '-ExecutionPolicy', 'Bypass',
+                    '-File', "`"$runner`"",
+                    '-Library', "`"$journalLibrary`"",
+                    '-JournalPath', "`"$($journal.JournalPath)`"",
+                    '-Description', "writer-$_",
+                    '-AllowedRoot', "`"$root`""
+                )
+            }
+        )
+        $processes | ForEach-Object { $_.WaitForExit() }
+
+        @($processes | Where-Object { $_.ExitCode -ne 0 }).Count | Should Be 0
+        $document = Get-Content -LiteralPath $journal.JournalPath -Raw | ConvertFrom-Json
+        @($document.Changes).Count | Should Be 16
     }
 }

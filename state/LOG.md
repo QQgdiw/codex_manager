@@ -50,3 +50,13 @@
 - 工作区内读写权限已验证。工作区外用户 Codex 目录、联网下载、系统级安装和管理员操作需要按次申请。
 - 用户已同意联网下载自动执行；首次遇到具体联网命令时应申请可复用的命令前缀授权。
 - 现有 `MCP/servers` 与 `Skills/AgentSkillsforContextEngineering` 必须作为首批管理对象，和后续白名单项目一样完成来源、版本、审批、部署和分层验证。
+
+## 2026-06-14：Task 5 安全回滚重构
+
+- 初始 RED：定向 33 项中 5 项失败，稳定复现 junction 删除、持久化根授权、备份换绑、重复键和 16 进程并发丢记录。
+- 扩展 RED：加入 Schema v2、未知字段/类型、Integrity、Confirm、FileId、delete 前置条件和耐久临时清理后，41 项中 33 项失败；主要缺口是 v1 Schema、无可信根参数、无锁和无身份确认。
+- GREEN：定向 41/41、Unit 122/122、Integration 3/3、All 125/125、攻击探针 15/15。
+- 路径授权必须使用调用方传入的可信 `AllowedRoots` 加默认 git 根和用户 `.codex`；日志内 `AllowedRoots` 仅用于审计并纳入完整性，不得参与授权。
+- 路径采用词法规范化，不解析 reparse 目标；从匹配根到目标任一现存组件含 reparse point 即拒绝。
+- create/directory_create 未确认时不得删除；确认后若 VolumeSerial/FileId 不匹配则拒绝。modify 同样要求原始身份匹配，delete 只在目标仍缺失时恢复。
+- DPAPI CurrentUser 不能抵御当前用户账户完全失陷；PowerShell 路径 API 仍无法彻底消除同用户微秒级 TOCTOU，但已修复可复现的替换攻击并在关键操作前重复检查。

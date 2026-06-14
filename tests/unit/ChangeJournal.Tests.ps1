@@ -50,6 +50,17 @@ function Write-TestJournal {
     )
 }
 
+function Write-TestAuthenticatedJournal {
+    param(
+        [object]$Journal,
+        [object]$Document
+    )
+
+    Write-ChangeJournalDocument `
+        -Document $Document `
+        -JournalPath $Journal.JournalPath
+}
+
 function Invoke-TestRollback {
     param(
         [object]$Journal,
@@ -57,6 +68,34 @@ function Invoke-TestRollback {
     )
 
     return Invoke-JournalRollback -Journal $Journal -AllowedRoots @($Root)
+}
+
+function Add-TestFileChange {
+    param(
+        [object]$Journal,
+        [string]$Root,
+        [string]$Path,
+        [string]$Kind
+    )
+
+    return Add-FileChange `
+        -Journal $Journal `
+        -Path $Path `
+        -Kind $Kind `
+        -AllowedRoots @($Root)
+}
+
+function Confirm-TestFileChange {
+    param(
+        [object]$Journal,
+        [string]$Root,
+        [string]$Path
+    )
+
+    return Confirm-FileChange `
+        -Journal $Journal `
+        -Path $Path `
+        -AllowedRoots @($Root)
 }
 
 function New-OverlappingRootsJournal {
@@ -74,9 +113,6 @@ function New-OverlappingRootsJournal {
         -WorkspaceRoot $Parent `
         -CodexRoot $codexRoot `
         -StateRoot (Join-Path $Parent '.state')
-    $document = Read-TestJournal -Journal $journal
-    $document.AllowedRoots = @($RootOrder)
-    Write-TestJournal -Journal $journal -Document $document
     return $journal
 }
 
@@ -97,7 +133,7 @@ Describe 'Change journal persistence' {
             Join-Path $root '.state\journals\operation-001\journal.json'
         )
         $document.Schema | Should Be 'codex.change-journal'
-        $document.Version | Should Be 1
+        $document.Version | Should Be 2
         $document.OperationId | Should Be 'operation-001'
         @($document.AllowedRoots).Count | Should BeGreaterThan 0
         @($document.Changes).Count | Should Be 0
@@ -151,7 +187,7 @@ Describe 'File change snapshots' {
         [IO.File]::SetLastWriteTimeUtc($path, $timestamp)
         $journal = New-TestJournal -Root $root
 
-        Add-FileChange -Journal $journal -Path $path -Kind modify
+        Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind modify
         [IO.File]::WriteAllBytes($path, [byte[]](9, 8, 7))
         [IO.File]::SetLastWriteTimeUtc($path, [DateTime]::UtcNow)
         $result = Invoke-TestRollback -Journal $journal -Root $root
@@ -170,9 +206,9 @@ Describe 'File change snapshots' {
         [IO.File]::WriteAllText($path, 'first')
         $journal = New-TestJournal -Root $root
 
-        Add-FileChange -Journal $journal -Path $path -Kind modify
+        Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind modify
         [IO.File]::WriteAllText($path, 'second')
-        Add-FileChange -Journal $journal -Path $path -Kind modify
+        Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind modify
         [IO.File]::WriteAllText($path, 'third')
         $document = Read-TestJournal -Journal $journal
         Invoke-TestRollback -Journal $journal -Root $root | Out-Null
@@ -187,7 +223,7 @@ Describe 'File change snapshots' {
         $journal = New-TestJournal -Root $root
 
         $message = Get-JournalExceptionMessage {
-            Add-FileChange -Journal $journal -Path (Join-Path $root 'x') -Kind move
+            Add-FileChange -Journal $journal -Path (Join-Path $root 'x') -Kind move -AllowedRoots @($root)
         }
 
         $message | Should Match 'Kind'
@@ -205,8 +241,9 @@ Describe 'Managed file rollback' {
         $path = Join-Path $root 'created.txt'
         $journal = New-TestJournal -Root $root
 
-        Add-FileChange -Journal $journal -Path $path -Kind create
+        Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind create
         [IO.File]::WriteAllText($path, 'created')
+        Confirm-TestFileChange -Journal $journal -Root $root -Path $path
         $result = Invoke-TestRollback -Journal $journal -Root $root
 
         @($result.Failed).Count | Should Be 0
@@ -220,7 +257,7 @@ Describe 'Managed file rollback' {
         [IO.File]::WriteAllText($path, 'restore me')
         $journal = New-TestJournal -Root $root
 
-        Add-FileChange -Journal $journal -Path $path -Kind delete
+        Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind delete
         Remove-Item -LiteralPath $path -Force
         $result = Invoke-TestRollback -Journal $journal -Root $root
 
@@ -234,9 +271,10 @@ Describe 'Managed file rollback' {
         $path = Join-Path $root 'installed-tool'
         $journal = New-TestJournal -Root $root
 
-        Add-FileChange -Journal $journal -Path $path -Kind directory_create
+        Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind directory_create
         New-Item -ItemType Directory -Path $path | Out-Null
         [IO.File]::WriteAllText((Join-Path $path 'payload.txt'), 'payload')
+        Confirm-TestFileChange -Journal $journal -Root $root -Path $path
         $result = Invoke-TestRollback -Journal $journal -Root $root
 
         @($result.Failed).Count | Should Be 0
@@ -250,10 +288,12 @@ Describe 'Managed file rollback' {
         $second = Join-Path $root 'second.txt'
         $journal = New-TestJournal -Root $root
 
-        Add-FileChange -Journal $journal -Path $first -Kind create
-        Add-FileChange -Journal $journal -Path $second -Kind create
+        Add-TestFileChange -Journal $journal -Root $root -Path $first -Kind create
+        Add-TestFileChange -Journal $journal -Root $root -Path $second -Kind create
         [IO.File]::WriteAllText($first, 'one')
         [IO.File]::WriteAllText($second, 'two')
+        Confirm-TestFileChange -Journal $journal -Root $root -Path $first
+        Confirm-TestFileChange -Journal $journal -Root $root -Path $second
         $result = Invoke-TestRollback -Journal $journal -Root $root
 
         @($result.Succeeded).Count | Should Be 2
@@ -269,10 +309,11 @@ Describe 'Managed file rollback' {
         [IO.File]::WriteAllText($modified, 'original')
         $journal = New-TestJournal -Root $root
 
-        Add-FileChange -Journal $journal -Path $created -Kind create
-        Add-FileChange -Journal $journal -Path $modified -Kind modify
+        Add-TestFileChange -Journal $journal -Root $root -Path $created -Kind create
+        Add-TestFileChange -Journal $journal -Root $root -Path $modified -Kind modify
         [IO.File]::WriteAllText($created, 'new')
         [IO.File]::WriteAllText($modified, 'changed')
+        Confirm-TestFileChange -Journal $journal -Root $root -Path $created
         $document = Read-TestJournal -Journal $journal
         [IO.File]::WriteAllText($document.Changes[1].BackupPath, 'tampered')
         $result = Invoke-TestRollback -Journal $journal -Root $root
@@ -288,8 +329,9 @@ Describe 'Managed file rollback' {
         New-Item -ItemType Directory -Path $root | Out-Null
         $path = Join-Path $root 'created.txt'
         $journal = New-TestJournal -Root $root
-        Add-FileChange -Journal $journal -Path $path -Kind create
+        Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind create
         [IO.File]::WriteAllText($path, 'new')
+        Confirm-TestFileChange -Journal $journal -Root $root -Path $path
 
         Invoke-TestRollback -Journal $journal -Root $root | Out-Null
         $second = Invoke-TestRollback -Journal $journal -Root $root
@@ -311,10 +353,10 @@ Describe 'Change journal safety boundaries' {
         $journal = New-TestJournal -Root $root
 
         $message = Get-JournalExceptionMessage {
-            Add-FileChange -Journal $journal -Path (Join-Path $outside 'x.txt') -Kind create
+            Add-FileChange -Journal $journal -Path (Join-Path $outside 'x.txt') -Kind create -AllowedRoots @($root)
         }
 
-        $message | Should Match 'allowed root'
+        $message | Should Match 'allowed root|reparse'
     }
 
     It 'does not confuse a path prefix with a child path' {
@@ -324,10 +366,10 @@ Describe 'Change journal safety boundaries' {
         $journal = New-TestJournal -Root $root
 
         $message = Get-JournalExceptionMessage {
-            Add-FileChange -Journal $journal -Path (Join-Path $collision 'x.txt') -Kind create
+            Add-FileChange -Journal $journal -Path (Join-Path $collision 'x.txt') -Kind create -AllowedRoots @($root)
         }
 
-        $message | Should Match 'allowed root'
+        $message | Should Match 'allowed root|reparse'
     }
 
     It 'rejects caller paths containing parent traversal segments' {
@@ -337,7 +379,7 @@ Describe 'Change journal safety boundaries' {
         $path = Join-Path $root 'child\..\escaped.txt'
 
         $message = Get-JournalExceptionMessage {
-            Add-FileChange -Journal $journal -Path $path -Kind create
+            Add-FileChange -Journal $journal -Path $path -Kind create -AllowedRoots @($root)
         }
 
         $message | Should Match 'parent traversal'
@@ -352,10 +394,10 @@ Describe 'Change journal safety boundaries' {
         $journal = New-TestJournal -Root $root
 
         $message = Get-JournalExceptionMessage {
-            Add-FileChange -Journal $journal -Path (Join-Path $junction 'x.txt') -Kind create
+            Add-FileChange -Journal $journal -Path (Join-Path $junction 'x.txt') -Kind create -AllowedRoots @($root)
         }
 
-        $message | Should Match 'allowed root'
+        $message | Should Match 'allowed root|reparse'
     }
 
     It 'refuses to register an allowed root for recursive deletion' {
@@ -364,7 +406,7 @@ Describe 'Change journal safety boundaries' {
         $journal = New-TestJournal -Root $root
 
         $message = Get-JournalExceptionMessage {
-            Add-FileChange -Journal $journal -Path $root -Kind directory_create
+            Add-FileChange -Journal $journal -Path $root -Kind directory_create -AllowedRoots @($root)
         }
 
         $message | Should Match 'root'
@@ -390,7 +432,8 @@ Describe 'Change journal safety boundaries' {
                 Add-FileChange `
                     -Journal $journal `
                     -Path $child `
-                    -Kind directory_create
+                    -Kind directory_create `
+                    -AllowedRoots $roots
             }
 
             $message | Should Match 'root'
@@ -411,7 +454,8 @@ Describe 'Change journal safety boundaries' {
         Add-FileChange `
             -Journal $journal `
             -Path $subdirectory `
-            -Kind directory_create | Out-Null
+            -Kind directory_create `
+            -AllowedRoots @($parent, $child) | Out-Null
 
         @((Read-TestJournal -Journal $journal).Changes).Count | Should Be 1
     }
@@ -435,10 +479,11 @@ Describe 'Change journal safety boundaries' {
             Add-FileChange `
                 -Journal $journal `
                 -Path $recorded `
-                -Kind directory_create | Out-Null
+                -Kind directory_create `
+                -AllowedRoots $roots | Out-Null
             $document = Read-TestJournal -Journal $journal
             $document.Changes[0].Path = $child
-            Write-TestJournal -Journal $journal -Document $document
+            Write-TestAuthenticatedJournal -Journal $journal -Document $document
             New-Item -ItemType Directory -Path $child -Force | Out-Null
             [IO.File]::WriteAllText((Join-Path $child 'keep.txt'), 'keep')
 
@@ -467,10 +512,11 @@ Describe 'Change journal safety boundaries' {
         Add-FileChange `
             -Journal $journal `
             -Path $recorded `
-            -Kind directory_create | Out-Null
+            -Kind directory_create `
+            -AllowedRoots $roots | Out-Null
         $document = Read-TestJournal -Journal $journal
         $document.Changes[0].Path = $alias
-        Write-TestJournal -Journal $journal -Document $document
+        Write-TestAuthenticatedJournal -Journal $journal -Document $document
         [IO.File]::WriteAllText((Join-Path $child 'keep.txt'), 'keep')
 
         $result = Invoke-JournalRollback `
@@ -503,17 +549,18 @@ Describe 'Change journal safety boundaries' {
         $outsidePath = Join-Path $outside 'keep.txt'
         [IO.File]::WriteAllText($outsidePath, 'keep')
         $journal = New-TestJournal -Root $root
-        Add-FileChange -Journal $journal -Path $insidePath -Kind create
+        Add-TestFileChange -Journal $journal -Root $root -Path $insidePath -Kind create
         $document = Read-TestJournal -Journal $journal
         $document.AllowedRoots = @($outside)
         $document.Changes[0].Path = $outsidePath
         Write-TestJournal -Journal $journal -Document $document
 
-        $result = Invoke-JournalRollback -Journal $journal
+        $message = Get-JournalExceptionMessage {
+            Invoke-JournalRollback -Journal $journal
+        }
 
         (Test-Path -LiteralPath $outsidePath -PathType Leaf) | Should Be $true
-        @($result.Failed).Count | Should Be 1
-        @($result.Succeeded).Count | Should Be 0
+        $message | Should Match 'integrity'
     }
 
     It 'rejects an operation identifier that does not match its journal directory' {
@@ -536,7 +583,7 @@ Describe 'Change journal safety boundaries' {
         New-Item -ItemType Directory -Path $root | Out-Null
         $path = Join-Path $root 'created.txt'
         $journal = New-TestJournal -Root $root
-        Add-FileChange -Journal $journal -Path $path -Kind create
+        Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind create
         $document = Read-TestJournal -Journal $journal
         $document.Changes[0].Kind = 'arbitrary'
         Write-TestJournal -Journal $journal -Document $document
@@ -555,5 +602,211 @@ Describe 'Change journal safety boundaries' {
 
         $LASTEXITCODE | Should Be 0
         "$ignored" | Should Be $probe
+    }
+}
+
+Describe 'Authenticated journal attack regressions' {
+    BeforeAll {
+        . $journalLibrary
+    }
+
+    It 'does not follow a junction and recursively delete its target' {
+        $root = Join-Path $TestDrive 'junction-delete-attack'
+        $target = Join-Path $root 'target'
+        $alias = Join-Path $root 'alias'
+        New-Item -ItemType Directory -Path $target -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $target 'keep.txt'), 'keep')
+        $journal = New-TestJournal -Root $root
+        Add-TestFileChange -Journal $journal -Root $root -Path $alias -Kind directory_create
+        New-Item -ItemType Directory -Path $alias | Out-Null
+        Confirm-TestFileChange -Journal $journal -Root $root -Path $alias
+        Remove-Item -LiteralPath $alias -Force
+        New-Item -ItemType Junction -Path $alias -Target $target | Out-Null
+
+        $result = Invoke-JournalRollback -Journal $journal -AllowedRoots @($root)
+
+        @($result.Failed).Count | Should Be 1
+        (Test-Path -LiteralPath $target -PathType Container) | Should Be $true
+        [IO.File]::ReadAllText((Join-Path $target 'keep.txt')) | Should Be 'keep'
+        (Test-Path -LiteralPath $alias) | Should Be $true
+    }
+
+    It 'does not authorize Add-FileChange from tampered audit roots' {
+        $root = Join-Path $TestDrive 'add-root'
+        $outside = Join-Path $TestDrive 'add-outside'
+        New-Item -ItemType Directory -Path $root, $outside | Out-Null
+        $journal = New-TestJournal -Root $root
+        $document = Read-TestJournal -Journal $journal
+        $document.AllowedRoots = @($outside)
+        Write-TestJournal -Journal $journal -Document $document
+
+        $message = Get-JournalExceptionMessage {
+            Add-FileChange `
+                -Journal $journal `
+                -Path (Join-Path $outside 'created.txt') `
+                -Kind create `
+                -AllowedRoots @($root)
+        }
+
+        $message | Should Match 'allowed root|integrity'
+    }
+
+    It 'rejects a backup path rebound to another journal backup' {
+        $root = Join-Path $TestDrive 'backup-rebind'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $first = Join-Path $root 'first.txt'
+        $second = Join-Path $root 'second.txt'
+        [IO.File]::WriteAllText($first, 'first')
+        [IO.File]::WriteAllText($second, 'second')
+        $journal = New-TestJournal -Root $root
+        Add-TestFileChange -Journal $journal -Root $root -Path $first -Kind modify
+        Add-TestFileChange -Journal $journal -Root $root -Path $second -Kind modify
+        $document = Read-TestJournal -Journal $journal
+        $document.Changes[0].BackupPath = $document.Changes[1].BackupPath
+        $document.Changes[0].BackupSha256 = $document.Changes[1].BackupSha256
+        Write-TestAuthenticatedJournal -Journal $journal -Document $document
+
+        $result = Invoke-JournalRollback -Journal $journal -AllowedRoots @($root)
+
+        @($result.Failed).Count | Should Be 1
+        $result.Failed[0].Error | Should Match 'backup'
+    }
+
+    It 'rejects duplicate JSON property names' {
+        $root = Join-Path $TestDrive 'duplicate-json'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root
+        $json = [IO.File]::ReadAllText($journal.JournalPath)
+        $json = $json -replace '"Version"\s*:\s*2', '"Version":2,"Version":2'
+        [IO.File]::WriteAllText($journal.JournalPath, $json)
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-JournalRollback -Journal $journal -AllowedRoots @($root)
+        }
+
+        $message | Should Match 'duplicate|journal'
+    }
+
+    It 'rejects unknown and incorrectly cased JSON properties' {
+        $root = Join-Path $TestDrive 'unknown-json'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root
+        $json = [IO.File]::ReadAllText($journal.JournalPath)
+        $json = $json -replace '"Schema"', '"schema"'
+        [IO.File]::WriteAllText($journal.JournalPath, $json)
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root
+        }
+
+        $message | Should Match 'unknown|schema|property'
+    }
+
+    It 'rejects JSON properties with the wrong type' {
+        $root = Join-Path $TestDrive 'wrong-type-json'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root
+        $json = [IO.File]::ReadAllText($journal.JournalPath)
+        $json = $json -replace '"Version"\s*:\s*2', '"Version":"2"'
+        [IO.File]::WriteAllText($journal.JournalPath, $json)
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root
+        }
+
+        $message | Should Match 'type|version|schema'
+    }
+
+    It 'rejects a schema-valid payload whose integrity is tampered' {
+        $root = Join-Path $TestDrive 'integrity-json'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root
+        $json = [IO.File]::ReadAllText($journal.JournalPath)
+        $json = $json -replace '"UpdatedAtUtc"\s*:\s*"[^"]+"', '"UpdatedAtUtc":"2001-01-01T00:00:00.0000000Z"'
+        [IO.File]::WriteAllText($journal.JournalPath, $json)
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root
+        }
+
+        $message | Should Match 'integrity'
+    }
+
+    It 'leaves an unconfirmed create as a residual' {
+        $root = Join-Path $TestDrive 'unconfirmed-create'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $path = Join-Path $root 'created.txt'
+        $journal = New-TestJournal -Root $root
+        Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind create
+        [IO.File]::WriteAllText($path, 'created')
+
+        $result = Invoke-TestRollback -Journal $journal -Root $root
+
+        @($result.Residuals).Count | Should Be 1
+        (Test-Path -LiteralPath $path -PathType Leaf) | Should Be $true
+    }
+
+    It 'refuses to delete a confirmed create replaced with another file' {
+        $root = Join-Path $TestDrive 'create-identity'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $path = Join-Path $root 'created.txt'
+        $journal = New-TestJournal -Root $root
+        Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind create
+        [IO.File]::WriteAllText($path, 'original create')
+        Confirm-TestFileChange -Journal $journal -Root $root -Path $path
+        Remove-Item -LiteralPath $path -Force
+        [IO.File]::WriteAllText($path, 'replacement')
+
+        $result = Invoke-TestRollback -Journal $journal -Root $root
+
+        @($result.Failed).Count | Should Be 1
+        [IO.File]::ReadAllText($path) | Should Be 'replacement'
+    }
+
+    It 'refuses to overwrite a modified file whose identity changed' {
+        $root = Join-Path $TestDrive 'modify-identity'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $path = Join-Path $root 'modified.txt'
+        [IO.File]::WriteAllText($path, 'original')
+        $journal = New-TestJournal -Root $root
+        Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind modify
+        Remove-Item -LiteralPath $path -Force
+        [IO.File]::WriteAllText($path, 'replacement')
+
+        $result = Invoke-TestRollback -Journal $journal -Root $root
+
+        @($result.Failed).Count | Should Be 1
+        [IO.File]::ReadAllText($path) | Should Be 'replacement'
+    }
+
+    It 'requires a delete target to remain absent before restore' {
+        $root = Join-Path $TestDrive 'delete-present'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $path = Join-Path $root 'deleted.txt'
+        [IO.File]::WriteAllText($path, 'original')
+        $journal = New-TestJournal -Root $root
+        Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind delete
+
+        $result = Invoke-TestRollback -Journal $journal -Root $root
+
+        @($result.Failed).Count | Should Be 1
+        [IO.File]::ReadAllText($path) | Should Be 'original'
+    }
+
+    It 'binds backups to the entry id and leaves no temporary artifacts' {
+        $root = Join-Path $TestDrive 'durable-backup'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $path = Join-Path $root 'modified.txt'
+        [IO.File]::WriteAllText($path, 'original')
+        $journal = New-TestJournal -Root $root
+        $entry = Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind modify
+        $document = Read-TestJournal -Journal $journal
+        $journalDirectory = Split-Path -Parent $journal.JournalPath
+
+        (Split-Path -Leaf $document.Changes[0].BackupPath) | Should Be "$($entry.Id).bin"
+        @(Get-ChildItem -LiteralPath $journalDirectory -Recurse -Force |
+            Where-Object { $_.Name -match '\.tmp-' }).Count | Should Be 0
+        (Get-Content -LiteralPath $journalLibrary -Raw) |
+            Should Match '\.Flush\(\$true\)'
     }
 }
