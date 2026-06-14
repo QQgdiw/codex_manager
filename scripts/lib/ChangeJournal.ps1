@@ -154,6 +154,21 @@ function Test-PathWithinRoot {
     return $Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Get-TrustedRollbackRoots {
+    param([AllowNull()][string[]]$AllowedRoots = @())
+
+    $workspaceRoot = Get-ChangeJournalWorkspaceRoot
+    $codexRoot = Join-Path (
+        [Environment]::GetFolderPath('UserProfile')
+    ) '.codex'
+    return @(
+        @($workspaceRoot, $codexRoot) + @($AllowedRoots) |
+            Where-Object { -not [string]::IsNullOrWhiteSpace("$_") } |
+            ForEach-Object { Get-CanonicalJournalPath -Path "$_" } |
+            Sort-Object -Unique
+    )
+}
+
 function Assert-ManagedJournalPath {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -179,6 +194,146 @@ function Assert-ManagedJournalPath {
         throw "Refusing to register an allowed root for recursive deletion: $Path"
     }
     return $canonical
+}
+
+function Test-JournalProperty {
+    param(
+        [Parameter(Mandatory = $true)][object]$Object,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    return $null -ne $Object.PSObject.Properties[$Name]
+}
+
+function Assert-JournalTimestamp {
+    param(
+        [Parameter(Mandatory = $true)][AllowNull()][object]$Value,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [switch]$AllowNull
+    )
+
+    if ($AllowNull -and $null -eq $Value) {
+        return
+    }
+    $parsed = [DateTime]::MinValue
+    if (
+        $null -eq $Value -or
+        -not [DateTime]::TryParse(
+            "$Value",
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind,
+            [ref]$parsed
+        )
+    ) {
+        throw "Change journal $Name is invalid."
+    }
+}
+
+function Assert-ChangeJournalEntry {
+    param([Parameter(Mandatory = $true)][object]$Entry)
+
+    foreach ($name in @(
+        'Id',
+        'Type',
+        'RecordedAtUtc',
+        'RolledBack',
+        'RolledBackAtUtc'
+    )) {
+        if (-not (Test-JournalProperty -Object $Entry -Name $name)) {
+            throw "Change journal entry is missing '$name'."
+        }
+    }
+    if ("$($Entry.Id)" -notmatch '^[0-9a-fA-F]{32}$') {
+        throw 'Change journal entry Id is invalid.'
+    }
+    Assert-JournalTimestamp `
+        -Value $Entry.RecordedAtUtc `
+        -Name 'entry RecordedAtUtc'
+    if ($Entry.RolledBack -isnot [bool]) {
+        throw 'Change journal entry RolledBack value is invalid.'
+    }
+    Assert-JournalTimestamp `
+        -Value $Entry.RolledBackAtUtc `
+        -Name 'entry RolledBackAtUtc' `
+        -AllowNull
+
+    switch ("$($Entry.Type)") {
+        'file' {
+            foreach ($name in @(
+                'Kind',
+                'Path',
+                'BackupPath',
+                'BackupSha256',
+                'Metadata'
+            )) {
+                if (-not (Test-JournalProperty -Object $Entry -Name $name)) {
+                    throw "Change journal file entry is missing '$name'."
+                }
+            }
+            if ("$($Entry.Kind)" -notin @(
+                'create',
+                'modify',
+                'delete',
+                'directory_create'
+            )) {
+                throw 'Change journal file entry Kind is invalid.'
+            }
+            if (
+                [string]::IsNullOrWhiteSpace("$($Entry.Path)") -or
+                -not [IO.Path]::IsPathRooted("$($Entry.Path)")
+            ) {
+                throw 'Change journal file entry Path is invalid.'
+            }
+            if ("$($Entry.Kind)" -in @('modify', 'delete')) {
+                if (
+                    [string]::IsNullOrWhiteSpace("$($Entry.BackupPath)") -or
+                    "$($Entry.BackupSha256)" -notmatch '^[0-9a-fA-F]{64}$' -or
+                    $null -eq $Entry.Metadata
+                ) {
+                    throw 'Change journal file entry backup metadata is invalid.'
+                }
+                foreach ($name in @(
+                    'Attributes',
+                    'CreationTimeUtc',
+                    'LastWriteTimeUtc',
+                    'LastAccessTimeUtc'
+                )) {
+                    if (-not (Test-JournalProperty -Object $Entry.Metadata -Name $name)) {
+                        throw "Change journal file entry metadata is missing '$name'."
+                    }
+                }
+                $attributes = 0
+                if (-not [int]::TryParse(
+                    "$($Entry.Metadata.Attributes)",
+                    [ref]$attributes
+                )) {
+                    throw 'Change journal file entry Attributes value is invalid.'
+                }
+                foreach ($name in @(
+                    'CreationTimeUtc',
+                    'LastWriteTimeUtc',
+                    'LastAccessTimeUtc'
+                )) {
+                    Assert-JournalTimestamp `
+                        -Value $Entry.Metadata.$name `
+                        -Name "entry metadata $name"
+                }
+            }
+        }
+        'external' {
+            foreach ($name in @('Description', 'RollbackCommand')) {
+                if (-not (Test-JournalProperty -Object $Entry -Name $name)) {
+                    throw "Change journal external entry is missing '$name'."
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace("$($Entry.Description)")) {
+                throw 'Change journal external entry Description is invalid.'
+            }
+        }
+        default {
+            throw 'Change journal entry Type is invalid.'
+        }
+    }
 }
 
 function Write-ChangeJournalDocument {
@@ -237,19 +392,35 @@ function Read-ChangeJournalDocument {
         $null -eq $document -or
         $document.Schema -ne $script:ChangeJournalSchema -or
         [int]$document.Version -ne $script:ChangeJournalVersion -or
-        [string]::IsNullOrWhiteSpace("$($document.OperationId)") -or
+        "$($document.OperationId)" -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' -or
         $null -eq $document.AllowedRoots -or
         $null -eq $document.Changes
     ) {
         throw "Change journal schema or version is invalid: $journalPath"
     }
 
+    if ((Split-Path -Leaf $journalPath) -ne 'journal.json') {
+        throw 'Change journal path must end in journal.json.'
+    }
     $journalDirectory = Get-CanonicalJournalPath -Path (Split-Path -Parent $journalPath)
     if (-not $journalDirectory.Equals(
         "$($document.JournalDirectory)",
         [StringComparison]::OrdinalIgnoreCase
     )) {
         throw 'Change journal directory metadata does not match its location.'
+    }
+    if (
+        -not (Split-Path -Leaf $journalDirectory).Equals(
+            "$($document.OperationId)",
+            [StringComparison]::OrdinalIgnoreCase
+        )
+    ) {
+        throw 'Change journal OperationId does not match its journal directory.'
+    }
+    Assert-JournalTimestamp -Value $document.CreatedAtUtc -Name 'CreatedAtUtc'
+    Assert-JournalTimestamp -Value $document.UpdatedAtUtc -Name 'UpdatedAtUtc'
+    foreach ($entry in @($document.Changes)) {
+        Assert-ChangeJournalEntry -Entry $entry
     }
 
     return [pscustomobject]@{
@@ -465,12 +636,13 @@ function Assert-ValidJournalBackup {
 function Restore-JournalFile {
     param(
         [Parameter(Mandatory = $true)][object]$Entry,
-        [Parameter(Mandatory = $true)][object]$Loaded
+        [Parameter(Mandatory = $true)][object]$Loaded,
+        [Parameter(Mandatory = $true)][string[]]$TrustedRoots
     )
 
     $target = Assert-ManagedJournalPath `
         -Path "$($Entry.Path)" `
-        -AllowedRoots @($Loaded.Document.AllowedRoots)
+        -AllowedRoots $TrustedRoots
     switch ("$($Entry.Kind)") {
         'create' {
             if (Test-Path -LiteralPath $target -PathType Container) {
@@ -484,7 +656,7 @@ function Restore-JournalFile {
         'directory_create' {
             $target = Assert-ManagedJournalPath `
                 -Path "$($Entry.Path)" `
-                -AllowedRoots @($Loaded.Document.AllowedRoots) `
+                -AllowedRoots $TrustedRoots `
                 -RejectRoot
             if (Test-Path -LiteralPath $target -PathType Leaf) {
                 throw 'Created directory path is now a file.'
@@ -545,9 +717,13 @@ function Restore-JournalFile {
 
 function Invoke-JournalRollback {
     [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][object]$Journal)
+    param(
+        [Parameter(Mandatory = $true)][object]$Journal,
+        [AllowNull()][string[]]$AllowedRoots = @()
+    )
 
     $loaded = Read-ChangeJournalDocument -Journal $Journal
+    $trustedRoots = Get-TrustedRollbackRoots -AllowedRoots $AllowedRoots
     $succeeded = New-Object 'System.Collections.Generic.List[object]'
     $failed = New-Object 'System.Collections.Generic.List[object]'
     $residuals = New-Object 'System.Collections.Generic.List[object]'
@@ -584,7 +760,10 @@ function Invoke-JournalRollback {
         }
 
         try {
-            $target = Restore-JournalFile -Entry $entry -Loaded $loaded
+            $target = Restore-JournalFile `
+                -Entry $entry `
+                -Loaded $loaded `
+                -TrustedRoots $trustedRoots
             $entry.RolledBack = $true
             $entry.RolledBackAtUtc = [DateTime]::UtcNow.ToString('o')
             Write-ChangeJournalDocument `

@@ -36,6 +36,29 @@ function Read-TestJournal {
         ConvertFrom-Json
 }
 
+function Write-TestJournal {
+    param(
+        [object]$Journal,
+        [object]$Document
+    )
+
+    $encoding = New-Object Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText(
+        $Journal.JournalPath,
+        ($Document | ConvertTo-Json -Depth 20),
+        $encoding
+    )
+}
+
+function Invoke-TestRollback {
+    param(
+        [object]$Journal,
+        [string]$Root
+    )
+
+    return Invoke-JournalRollback -Journal $Journal -AllowedRoots @($Root)
+}
+
 Describe 'Change journal persistence' {
     BeforeAll {
         . $journalLibrary
@@ -83,7 +106,7 @@ Describe 'Change journal persistence' {
             -Journal $journal `
             -Description 'unmanaged installer change' `
             -RollbackCommand $command
-        $result = Invoke-JournalRollback -Journal $journal
+        $result = Invoke-TestRollback -Journal $journal -Root $root
 
         (Test-Path -LiteralPath $sentinel) | Should Be $false
         @($result.Failed).Count | Should Be 0
@@ -110,7 +133,7 @@ Describe 'File change snapshots' {
         Add-FileChange -Journal $journal -Path $path -Kind modify
         [IO.File]::WriteAllBytes($path, [byte[]](9, 8, 7))
         [IO.File]::SetLastWriteTimeUtc($path, [DateTime]::UtcNow)
-        $result = Invoke-JournalRollback -Journal $journal
+        $result = Invoke-TestRollback -Journal $journal -Root $root
 
         @($result.Failed).Count | Should Be 0
         [Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) |
@@ -131,7 +154,7 @@ Describe 'File change snapshots' {
         Add-FileChange -Journal $journal -Path $path -Kind modify
         [IO.File]::WriteAllText($path, 'third')
         $document = Read-TestJournal -Journal $journal
-        Invoke-JournalRollback -Journal $journal | Out-Null
+        Invoke-TestRollback -Journal $journal -Root $root | Out-Null
 
         @($document.Changes).Count | Should Be 1
         [IO.File]::ReadAllText($path) | Should Be 'first'
@@ -163,7 +186,7 @@ Describe 'Managed file rollback' {
 
         Add-FileChange -Journal $journal -Path $path -Kind create
         [IO.File]::WriteAllText($path, 'created')
-        $result = Invoke-JournalRollback -Journal $journal
+        $result = Invoke-TestRollback -Journal $journal -Root $root
 
         @($result.Failed).Count | Should Be 0
         (Test-Path -LiteralPath $path) | Should Be $false
@@ -178,7 +201,7 @@ Describe 'Managed file rollback' {
 
         Add-FileChange -Journal $journal -Path $path -Kind delete
         Remove-Item -LiteralPath $path -Force
-        $result = Invoke-JournalRollback -Journal $journal
+        $result = Invoke-TestRollback -Journal $journal -Root $root
 
         @($result.Failed).Count | Should Be 0
         [IO.File]::ReadAllText($path) | Should Be 'restore me'
@@ -193,7 +216,7 @@ Describe 'Managed file rollback' {
         Add-FileChange -Journal $journal -Path $path -Kind directory_create
         New-Item -ItemType Directory -Path $path | Out-Null
         [IO.File]::WriteAllText((Join-Path $path 'payload.txt'), 'payload')
-        $result = Invoke-JournalRollback -Journal $journal
+        $result = Invoke-TestRollback -Journal $journal -Root $root
 
         @($result.Failed).Count | Should Be 0
         (Test-Path -LiteralPath $path) | Should Be $false
@@ -210,7 +233,7 @@ Describe 'Managed file rollback' {
         Add-FileChange -Journal $journal -Path $second -Kind create
         [IO.File]::WriteAllText($first, 'one')
         [IO.File]::WriteAllText($second, 'two')
-        $result = Invoke-JournalRollback -Journal $journal
+        $result = Invoke-TestRollback -Journal $journal -Root $root
 
         @($result.Succeeded).Count | Should Be 2
         $result.Succeeded[0].Path | Should Be $second
@@ -231,7 +254,7 @@ Describe 'Managed file rollback' {
         [IO.File]::WriteAllText($modified, 'changed')
         $document = Read-TestJournal -Journal $journal
         [IO.File]::WriteAllText($document.Changes[1].BackupPath, 'tampered')
-        $result = Invoke-JournalRollback -Journal $journal
+        $result = Invoke-TestRollback -Journal $journal -Root $root
 
         @($result.Failed).Count | Should Be 1
         @($result.Succeeded).Count | Should Be 1
@@ -247,8 +270,8 @@ Describe 'Managed file rollback' {
         Add-FileChange -Journal $journal -Path $path -Kind create
         [IO.File]::WriteAllText($path, 'new')
 
-        Invoke-JournalRollback -Journal $journal | Out-Null
-        $second = Invoke-JournalRollback -Journal $journal
+        Invoke-TestRollback -Journal $journal -Root $root | Out-Null
+        $second = Invoke-TestRollback -Journal $journal -Root $root
 
         @($second.Failed).Count | Should Be 0
         (Test-Path -LiteralPath $path) | Should Be $false
@@ -337,5 +360,67 @@ Describe 'Change journal safety boundaries' {
         }
 
         $message | Should Match 'journal'
+    }
+
+    It 'does not trust tampered journal roots to delete an external file' {
+        $root = Join-Path $TestDrive 'tampered-root'
+        $outside = Join-Path $TestDrive 'tampered-outside'
+        New-Item -ItemType Directory -Path $root, $outside | Out-Null
+        $insidePath = Join-Path $root 'created.txt'
+        $outsidePath = Join-Path $outside 'keep.txt'
+        [IO.File]::WriteAllText($outsidePath, 'keep')
+        $journal = New-TestJournal -Root $root
+        Add-FileChange -Journal $journal -Path $insidePath -Kind create
+        $document = Read-TestJournal -Journal $journal
+        $document.AllowedRoots = @($outside)
+        $document.Changes[0].Path = $outsidePath
+        Write-TestJournal -Journal $journal -Document $document
+
+        $result = Invoke-JournalRollback -Journal $journal
+
+        (Test-Path -LiteralPath $outsidePath -PathType Leaf) | Should Be $true
+        @($result.Failed).Count | Should Be 1
+        @($result.Succeeded).Count | Should Be 0
+    }
+
+    It 'rejects an operation identifier that does not match its journal directory' {
+        $root = Join-Path $TestDrive 'tampered-operation'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'original-operation'
+        $document = Read-TestJournal -Journal $journal
+        $document.OperationId = 'different-operation'
+        Write-TestJournal -Journal $journal -Document $document
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root
+        }
+
+        $message | Should Match 'OperationId'
+    }
+
+    It 'rejects malformed file entries before rollback' {
+        $root = Join-Path $TestDrive 'tampered-entry'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $path = Join-Path $root 'created.txt'
+        $journal = New-TestJournal -Root $root
+        Add-FileChange -Journal $journal -Path $path -Kind create
+        $document = Read-TestJournal -Journal $journal
+        $document.Changes[0].Kind = 'arbitrary'
+        Write-TestJournal -Journal $journal -Document $document
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root
+        }
+
+        $message | Should Match 'entry'
+    }
+
+    It 'ignores persisted journal state in Git' {
+        $probe = '.state/journals/probe.json'
+
+        $ignored = & git -C $projectRoot check-ignore $probe
+
+        $LASTEXITCODE | Should Be 0
+        "$ignored" | Should Be $probe
     }
 }

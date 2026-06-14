@@ -15,6 +15,7 @@ auth.json
 # Test and coverage output
 coverage/
 TestResults/
+.state/journals/
 
 # Python caches
 __pycache__/

@@ -22,7 +22,7 @@ Describe 'Persistent rollback integration' {
         [IO.File]::WriteAllText($path, 'changed')
 
         $reloaded = [pscustomobject]@{ JournalPath = $journal.JournalPath }
-        $result = Invoke-JournalRollback -Journal $reloaded
+        $result = Invoke-JournalRollback -Journal $reloaded -AllowedRoots @($root)
 
         @($result.Failed).Count | Should Be 0
         [IO.File]::ReadAllText($path) | Should Be 'original'
@@ -44,10 +44,15 @@ Describe 'Persistent rollback integration' {
         $runner = Join-Path $root 'rollback-runner.ps1'
         $resultPath = Join-Path $root 'rollback-result.json'
         $runnerText = @'
-param([string]$Library, [string]$JournalPath, [string]$ResultPath)
+param(
+    [string]$Library,
+    [string]$JournalPath,
+    [string]$ResultPath,
+    [string]$AllowedRoot
+)
 . $Library
 $journal = [pscustomobject]@{ JournalPath = $JournalPath }
-$result = Invoke-JournalRollback -Journal $journal
+$result = Invoke-JournalRollback -Journal $journal -AllowedRoots @($AllowedRoot)
 $result | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ResultPath -Encoding UTF8
 if (@($result.Failed).Count -gt 0) { exit 1 }
 '@
@@ -56,7 +61,8 @@ if (@($result.Failed).Count -gt 0) { exit 1 }
         & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
             -Library $journalLibrary `
             -JournalPath $journal.JournalPath `
-            -ResultPath $resultPath
+            -ResultPath $resultPath `
+            -AllowedRoot $root
         $exitCode = $LASTEXITCODE
 
         $exitCode | Should Be 0
