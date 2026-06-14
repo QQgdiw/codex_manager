@@ -59,6 +59,27 @@ function Invoke-TestRollback {
     return Invoke-JournalRollback -Journal $Journal -AllowedRoots @($Root)
 }
 
+function New-OverlappingRootsJournal {
+    param(
+        [string]$Parent,
+        [string]$Child,
+        [string[]]$RootOrder
+    )
+
+    $codexRoot = Join-Path $Parent '.codex-test'
+    New-Item -ItemType Directory -Path $codexRoot -Force | Out-Null
+    $journal = New-ChangeJournal `
+        -OperationId ([Guid]::NewGuid().ToString('N')) `
+        -AllowedRoots $RootOrder `
+        -WorkspaceRoot $Parent `
+        -CodexRoot $codexRoot `
+        -StateRoot (Join-Path $Parent '.state')
+    $document = Read-TestJournal -Journal $journal
+    $document.AllowedRoots = @($RootOrder)
+    Write-TestJournal -Journal $journal -Document $document
+    return $journal
+}
+
 Describe 'Change journal persistence' {
     BeforeAll {
         . $journalLibrary
@@ -347,6 +368,118 @@ Describe 'Change journal safety boundaries' {
         }
 
         $message | Should Match 'root'
+    }
+
+    It 'rejects an overlapping child root regardless of root order' {
+        foreach ($reverse in @($false, $true)) {
+            $parent = Join-Path $TestDrive "overlap-register-$reverse"
+            $child = Join-Path $parent 'child'
+            New-Item -ItemType Directory -Path $parent | Out-Null
+            $roots = if ($reverse) {
+                @($child, $parent)
+            }
+            else {
+                @($parent, $child)
+            }
+            $journal = New-OverlappingRootsJournal `
+                -Parent $parent `
+                -Child $child `
+                -RootOrder $roots
+
+            $message = Get-JournalExceptionMessage {
+                Add-FileChange `
+                    -Journal $journal `
+                    -Path $child `
+                    -Kind directory_create
+            }
+
+            $message | Should Match 'root'
+            @((Read-TestJournal -Journal $journal).Changes).Count | Should Be 0
+        }
+    }
+
+    It 'allows a subdirectory beneath an overlapping child root' {
+        $parent = Join-Path $TestDrive 'overlap-subdirectory'
+        $child = Join-Path $parent 'child'
+        $subdirectory = Join-Path $child 'subdirectory'
+        New-Item -ItemType Directory -Path $child -Force | Out-Null
+        $journal = New-OverlappingRootsJournal `
+            -Parent $parent `
+            -Child $child `
+            -RootOrder @($parent, $child)
+
+        Add-FileChange `
+            -Journal $journal `
+            -Path $subdirectory `
+            -Kind directory_create | Out-Null
+
+        @((Read-TestJournal -Journal $journal).Changes).Count | Should Be 1
+    }
+
+    It 'does not roll back-delete an overlapping child root in either order' {
+        foreach ($reverse in @($false, $true)) {
+            $parent = Join-Path $TestDrive "overlap-rollback-$reverse"
+            $child = Join-Path $parent 'child'
+            $recorded = Join-Path $child 'recorded'
+            New-Item -ItemType Directory -Path $parent | Out-Null
+            $roots = if ($reverse) {
+                @($child, $parent)
+            }
+            else {
+                @($parent, $child)
+            }
+            $journal = New-OverlappingRootsJournal `
+                -Parent $parent `
+                -Child $child `
+                -RootOrder $roots
+            Add-FileChange `
+                -Journal $journal `
+                -Path $recorded `
+                -Kind directory_create | Out-Null
+            $document = Read-TestJournal -Journal $journal
+            $document.Changes[0].Path = $child
+            Write-TestJournal -Journal $journal -Document $document
+            New-Item -ItemType Directory -Path $child -Force | Out-Null
+            [IO.File]::WriteAllText((Join-Path $child 'keep.txt'), 'keep')
+
+            $result = Invoke-JournalRollback `
+                -Journal $journal `
+                -AllowedRoots $roots
+
+            @($result.Failed).Count | Should Be 1
+            (Test-Path -LiteralPath $child -PathType Container) | Should Be $true
+            [IO.File]::ReadAllText((Join-Path $child 'keep.txt')) | Should Be 'keep'
+        }
+    }
+
+    It 'protects a child root reached through a junction' {
+        $parent = Join-Path $TestDrive 'overlap-junction'
+        $child = Join-Path $parent 'child'
+        $alias = Join-Path $parent 'alias'
+        $recorded = Join-Path $child 'recorded'
+        New-Item -ItemType Directory -Path $child -Force | Out-Null
+        New-Item -ItemType Junction -Path $alias -Target $child | Out-Null
+        $roots = @($parent, $child)
+        $journal = New-OverlappingRootsJournal `
+            -Parent $parent `
+            -Child $child `
+            -RootOrder $roots
+        Add-FileChange `
+            -Journal $journal `
+            -Path $recorded `
+            -Kind directory_create | Out-Null
+        $document = Read-TestJournal -Journal $journal
+        $document.Changes[0].Path = $alias
+        Write-TestJournal -Journal $journal -Document $document
+        [IO.File]::WriteAllText((Join-Path $child 'keep.txt'), 'keep')
+
+        $result = Invoke-JournalRollback `
+            -Journal $journal `
+            -AllowedRoots $roots
+
+        @($result.Failed).Count | Should Be 1
+        (Test-Path -LiteralPath $child -PathType Container) | Should Be $true
+        [IO.File]::ReadAllText((Join-Path $child 'keep.txt')) | Should Be 'keep'
     }
 
     It 'rejects a corrupted journal before rollback' {

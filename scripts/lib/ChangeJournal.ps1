@@ -154,6 +154,30 @@ function Test-PathWithinRoot {
     return $Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
 }
 
+function ConvertTo-CanonicalRootList {
+    param([AllowNull()][object[]]$Roots = @())
+
+    $uniqueRoots = @(
+        $Roots |
+            Where-Object { -not [string]::IsNullOrWhiteSpace("$_") } |
+            ForEach-Object { Get-CanonicalJournalPath -Path "$_" } |
+            Sort-Object -Unique
+    )
+    return @(
+        $uniqueRoots |
+            Sort-Object -Property @(
+                @{
+                    Expression = { $_.Length }
+                    Descending = $true
+                },
+                @{
+                    Expression = { "$_" }
+                    Descending = $false
+                }
+            )
+    )
+}
+
 function Get-TrustedRollbackRoots {
     param([AllowNull()][string[]]$AllowedRoots = @())
 
@@ -161,11 +185,8 @@ function Get-TrustedRollbackRoots {
     $codexRoot = Join-Path (
         [Environment]::GetFolderPath('UserProfile')
     ) '.codex'
-    return @(
-        @($workspaceRoot, $codexRoot) + @($AllowedRoots) |
-            Where-Object { -not [string]::IsNullOrWhiteSpace("$_") } |
-            ForEach-Object { Get-CanonicalJournalPath -Path "$_" } |
-            Sort-Object -Unique
+    return ConvertTo-CanonicalRootList -Roots (
+        @($workspaceRoot, $codexRoot) + @($AllowedRoots)
     )
 }
 
@@ -177,8 +198,9 @@ function Assert-ManagedJournalPath {
     )
 
     $canonical = Get-CanonicalJournalPath -Path $Path -RejectParentTraversal
+    $canonicalRoots = ConvertTo-CanonicalRootList -Roots $AllowedRoots
     $matchedRoot = $null
-    foreach ($root in @($AllowedRoots)) {
+    foreach ($root in $canonicalRoots) {
         if (Test-PathWithinRoot -Path $canonical -Root "$root") {
             $matchedRoot = "$root"
             break
@@ -187,11 +209,15 @@ function Assert-ManagedJournalPath {
     if ($null -eq $matchedRoot) {
         throw "Path is outside every allowed root: $Path"
     }
-    if ($RejectRoot -and $canonical.Equals(
-        $matchedRoot,
-        [StringComparison]::OrdinalIgnoreCase
-    )) {
-        throw "Refusing to register an allowed root for recursive deletion: $Path"
+    if ($RejectRoot) {
+        foreach ($root in $canonicalRoots) {
+            if ($canonical.Equals(
+                "$root",
+                [StringComparison]::OrdinalIgnoreCase
+            )) {
+                throw "Refusing to register an allowed root for recursive deletion: $Path"
+            }
+        }
     }
     return $canonical
 }
@@ -454,12 +480,7 @@ function New-ChangeJournal {
         $StateRoot = Join-Path $workspaceCanonical '.state'
     }
     $allRoots = @($workspaceCanonical, $CodexRoot) + @($AllowedRoots)
-    $canonicalRoots = @(
-        $allRoots |
-            Where-Object { -not [string]::IsNullOrWhiteSpace("$_") } |
-            ForEach-Object { Get-CanonicalJournalPath -Path "$_" } |
-            Sort-Object -Unique
-    )
+    $canonicalRoots = ConvertTo-CanonicalRootList -Roots $allRoots
 
     $stateCanonical = Get-CanonicalJournalPath -Path $StateRoot
     if (-not (Test-PathWithinRoot -Path $stateCanonical -Root $workspaceCanonical)) {
