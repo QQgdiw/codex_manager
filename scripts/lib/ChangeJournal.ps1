@@ -718,20 +718,175 @@ function Get-ChangeJournalLockPath {
     )
 }
 
+function Get-ChangeJournalStorageLayout {
+    param([Parameter(Mandatory = $true)][string]$JournalPath)
+
+    $journalPathValue = Get-LexicalJournalPath -Path $JournalPath -RejectParentTraversal
+    if ((Split-Path -Leaf $journalPathValue) -cne 'journal.json') {
+        throw 'Change journal path must end in journal.json.'
+    }
+    $operationDirectory = Get-LexicalJournalPath -Path (
+        Split-Path -Parent $journalPathValue
+    )
+    $journalsDirectory = Get-LexicalJournalPath -Path (
+        Split-Path -Parent $operationDirectory
+    )
+    if ((Split-Path -Leaf $journalsDirectory) -cne 'journals') {
+        throw 'Change journal path must be inside a journals directory.'
+    }
+    $stateRoot = Get-LexicalJournalPath -Path (
+        Split-Path -Parent $journalsDirectory
+    )
+    $operationId = Split-Path -Leaf $operationDirectory
+    if ($operationId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') {
+        throw 'Change journal operation directory is invalid.'
+    }
+    return [pscustomobject]@{
+        JournalPath = $journalPathValue
+        OperationId = $operationId
+        OperationDirectory = $operationDirectory
+        JournalsDirectory = $journalsDirectory
+        StateRoot = $stateRoot
+        BackupDirectory = Join-Path $operationDirectory 'backups'
+        LockPath = Join-Path $journalsDirectory "$operationId.lock"
+    }
+}
+
+function Assert-StorageComponentSafe {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    $attributes = [IO.File]::GetAttributes($Path)
+    if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Change journal storage contains a reparse point: $Path"
+    }
+}
+
+function Ensure-JournalStorageDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$TrustedRoot
+    )
+
+    $stateRootValue = Get-LexicalJournalPath -Path $StateRoot
+    $pathValue = Get-LexicalJournalPath -Path $Path
+    if (-not (Test-PathWithinRoot -Path $pathValue -Root $stateRootValue)) {
+        throw 'Journal storage directory is outside StateRoot.'
+    }
+    $trustedRootValue = Get-LexicalJournalPath -Path $TrustedRoot
+    if (-not (Test-Path -LiteralPath $trustedRootValue -PathType Container)) {
+        throw 'Trusted root must exist before creating journal storage.'
+    }
+    Assert-StorageComponentSafe -Path $trustedRootValue
+
+    $relative = $pathValue.Substring($trustedRootValue.Length).TrimStart('\', '/')
+    $components = @()
+    $cursor = $trustedRootValue
+    if (-not [string]::IsNullOrEmpty($relative)) {
+        foreach ($segment in ($relative -split '[\\/]')) {
+            $cursor = Join-Path $cursor $segment
+            $components += $cursor
+        }
+    }
+    foreach ($component in $components) {
+        if (-not (Test-PathWithinRoot -Path $component -Root $trustedRootValue)) {
+            throw 'Journal storage directory escaped its trusted root.'
+        }
+        $parent = Split-Path -Parent $component
+        if (-not [string]::IsNullOrEmpty($parent)) {
+            Assert-NoReparsePath -Path $parent -Root $TrustedRoot
+        }
+        Assert-StorageComponentSafe -Path $component
+        if (-not (Test-Path -LiteralPath $component)) {
+            [void][IO.Directory]::CreateDirectory($component)
+        }
+        Assert-StorageComponentSafe -Path $component
+        Assert-NoReparsePath -Path $component -Root $TrustedRoot
+        if (-not (Test-Path -LiteralPath $component -PathType Container)) {
+            throw "Journal storage component is not a directory: $component"
+        }
+    }
+}
+
+function Validate-JournalStoragePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$JournalPath,
+        [Parameter(Mandatory = $true)][string[]]$TrustedRoots,
+        [switch]$CreateDirectories,
+        [switch]$IncludeBackupDirectory
+    )
+
+    $layout = Get-ChangeJournalStorageLayout -JournalPath $JournalPath
+    $roots = ConvertTo-LexicalRootList -Roots $TrustedRoots
+    $trustedRoot = Get-MatchingJournalRoot -Path $layout.StateRoot -Roots $roots
+    if ($null -eq $trustedRoot) {
+        throw 'Change journal StateRoot is outside every trusted allowed root.'
+    }
+    Assert-NoReparsePath -Path $layout.StateRoot -Root $trustedRoot
+
+    $directories = @(
+        $layout.StateRoot,
+        $layout.JournalsDirectory,
+        $layout.OperationDirectory
+    )
+    if ($IncludeBackupDirectory) {
+        $directories += $layout.BackupDirectory
+    }
+    foreach ($directory in $directories) {
+        if (-not (Test-PathWithinRoot -Path $directory -Root $layout.StateRoot)) {
+            throw 'Journal internal path is outside StateRoot.'
+        }
+        if ($CreateDirectories) {
+            Ensure-JournalStorageDirectory `
+                -StateRoot $layout.StateRoot `
+                -Path $directory `
+                -TrustedRoot $trustedRoot
+        }
+        else {
+            Assert-NoReparsePath -Path $directory -Root $trustedRoot
+            if (
+                $directory -ne $layout.BackupDirectory -and
+                -not (Test-Path -LiteralPath $directory -PathType Container)
+            ) {
+                throw "Journal storage directory does not exist: $directory"
+            }
+        }
+    }
+    foreach ($filePath in @(
+        $layout.JournalPath,
+        $layout.LockPath
+    )) {
+        if (-not (Test-PathWithinRoot -Path $filePath -Root $layout.StateRoot)) {
+            throw 'Journal internal file path is outside StateRoot.'
+        }
+        Assert-NoReparsePath -Path $filePath -Root $trustedRoot
+        Assert-StorageComponentSafe -Path $filePath
+    }
+    return $layout
+}
+
 function Invoke-WithChangeJournalLock {
     param(
         [Parameter(Mandatory = $true)][string]$JournalPath,
+        [Parameter(Mandatory = $true)][string[]]$TrustedRoots,
         [Parameter(Mandatory = $true)][scriptblock]$Action
     )
 
-    $lockPath = Get-ChangeJournalLockPath -JournalPath $JournalPath
-    New-Item -ItemType Directory -Path (Split-Path -Parent $lockPath) -Force |
-        Out-Null
+    $layout = Validate-JournalStoragePath `
+        -JournalPath $JournalPath `
+        -TrustedRoots $TrustedRoots
+    $lockPath = $layout.LockPath
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     $stream = $null
     try {
         while ($null -eq $stream) {
             try {
+                [void](Validate-JournalStoragePath `
+                    -JournalPath $JournalPath `
+                    -TrustedRoots $TrustedRoots)
                 $stream = [IO.File]::Open(
                     $lockPath,
                     [IO.FileMode]::OpenOrCreate,
@@ -746,6 +901,9 @@ function Invoke-WithChangeJournalLock {
                 Start-Sleep -Milliseconds 25
             }
         }
+        [void](Validate-JournalStoragePath `
+            -JournalPath $JournalPath `
+            -TrustedRoots $TrustedRoots)
         return & $Action
     }
     finally {
@@ -781,7 +939,8 @@ function Write-DurableFile {
 function Write-ChangeJournalDocument {
     param(
         [Parameter(Mandatory = $true)][object]$Document,
-        [Parameter(Mandatory = $true)][string]$JournalPath
+        [Parameter(Mandatory = $true)][string]$JournalPath,
+        [Parameter(Mandatory = $true)][string[]]$TrustedRoots
     )
 
     $Document.UpdatedAtUtc = [DateTime]::UtcNow.ToString('o')
@@ -793,7 +952,9 @@ function Write-ChangeJournalDocument {
         [Array]::Clear($hash, 0, $hash.Length)
     }
     $directory = Split-Path -Parent $JournalPath
-    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    [void](Validate-JournalStoragePath `
+        -JournalPath $JournalPath `
+        -TrustedRoots $TrustedRoots)
     $temporaryPath = Join-Path $directory (
         'journal.json.tmp-' + [Guid]::NewGuid().ToString('N')
     )
@@ -804,7 +965,13 @@ function Write-ChangeJournalDocument {
         ($Document | ConvertTo-Json -Depth 20)
     )
     try {
+        [void](Validate-JournalStoragePath `
+            -JournalPath $JournalPath `
+            -TrustedRoots $TrustedRoots)
         Write-DurableFile -Path $temporaryPath -Bytes $bytes
+        [void](Validate-JournalStoragePath `
+            -JournalPath $JournalPath `
+            -TrustedRoots $TrustedRoots)
         if (Test-Path -LiteralPath $JournalPath -PathType Leaf) {
             [IO.File]::Replace($temporaryPath, $JournalPath, $backupPath, $true)
         }
@@ -823,12 +990,18 @@ function Write-ChangeJournalDocument {
 }
 
 function Read-ChangeJournalDocument {
-    param([Parameter(Mandatory = $true)][object]$Journal)
+    param(
+        [Parameter(Mandatory = $true)][object]$Journal,
+        [Parameter(Mandatory = $true)][string[]]$TrustedRoots
+    )
 
     if ($null -eq $Journal -or [string]::IsNullOrWhiteSpace("$($Journal.JournalPath)")) {
         throw 'Journal must contain JournalPath.'
     }
     $journalPath = Get-LexicalJournalPath -Path "$($Journal.JournalPath)"
+    [void](Validate-JournalStoragePath `
+        -JournalPath $journalPath `
+        -TrustedRoots $TrustedRoots)
     if (-not (Test-Path -LiteralPath $journalPath -PathType Leaf)) {
         throw "Change journal does not exist: $journalPath"
     }
@@ -918,15 +1091,22 @@ function New-ChangeJournal {
     )
     $state = Assert-ManagedJournalPath `
         -Path $StateRoot `
-        -AllowedRoots $auditRoots
+        -AllowedRoots (Get-TrustedJournalRoots -AllowedRoots $AllowedRoots)
     $journalDirectory = Join-Path $state "journals\$OperationId"
     $journalPath = Join-Path $journalDirectory 'journal.json'
+    $trustedRoots = Get-TrustedJournalRoots -AllowedRoots $AllowedRoots
+    [void](Validate-JournalStoragePath `
+        -JournalPath $journalPath `
+        -TrustedRoots $trustedRoots `
+        -CreateDirectories)
 
-    return Invoke-WithChangeJournalLock -JournalPath $journalPath -Action {
+    return Invoke-WithChangeJournalLock `
+        -JournalPath $journalPath `
+        -TrustedRoots $trustedRoots `
+        -Action {
         if (Test-Path -LiteralPath $journalPath) {
             throw "A journal already exists for operation: $OperationId"
         }
-        New-Item -ItemType Directory -Path $journalDirectory -Force | Out-Null
         $journalDirectory = Get-LexicalJournalPath -Path $journalDirectory
         $now = [DateTime]::UtcNow.ToString('o')
         $document = [pscustomobject][ordered]@{
@@ -941,7 +1121,10 @@ function New-ChangeJournal {
             Changes = @()
             Integrity = ''
         }
-        Write-ChangeJournalDocument -Document $document -JournalPath $journalPath
+        Write-ChangeJournalDocument `
+            -Document $document `
+            -JournalPath $journalPath `
+            -TrustedRoots $trustedRoots
         return [pscustomobject]@{
             OperationId = $OperationId
             JournalPath = $journalPath
@@ -961,13 +1144,31 @@ function Add-FileChange {
     )
 
     $journalPath = Get-LexicalJournalPath -Path "$($Journal.JournalPath)"
-    return Invoke-WithChangeJournalLock -JournalPath $journalPath -Action {
-        $loaded = Read-ChangeJournalDocument -Journal $Journal
-        $trustedRoots = Get-TrustedJournalRoots -AllowedRoots $AllowedRoots
+    $trustedRoots = Get-TrustedJournalRoots -AllowedRoots $AllowedRoots
+    [void](Validate-JournalStoragePath `
+        -JournalPath $journalPath `
+        -TrustedRoots $trustedRoots)
+    return Invoke-WithChangeJournalLock `
+        -JournalPath $journalPath `
+        -TrustedRoots $trustedRoots `
+        -Action {
+        $loaded = Read-ChangeJournalDocument `
+            -Journal $Journal `
+            -TrustedRoots $trustedRoots
         $pathValue = Assert-ManagedJournalPath `
             -Path $Path `
             -AllowedRoots $trustedRoots `
             -RejectRoot:($Kind -eq 'directory_create')
+        $storageLayout = Get-ChangeJournalStorageLayout -JournalPath $loaded.Path
+        if (
+            $Kind -ceq 'directory_create' -and
+            $pathValue.Equals(
+                $storageLayout.StateRoot,
+                [StringComparison]::OrdinalIgnoreCase
+            )
+        ) {
+            throw 'Refusing to register journal StateRoot for recursive deletion.'
+        }
         foreach ($existing in $loaded.Document.Changes) {
             if (
                 $existing.Type -ceq 'file' -and
@@ -1005,13 +1206,21 @@ function Add-FileChange {
                     LastAccessTimeUtc = $item.LastAccessTimeUtc.ToString('o')
                 }
                 $backupDirectory = Join-Path $loaded.Directory 'backups'
-                New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
+                [void](Validate-JournalStoragePath `
+                    -JournalPath $loaded.Path `
+                    -TrustedRoots $trustedRoots `
+                    -CreateDirectories `
+                    -IncludeBackupDirectory)
                 $backupPath = Join-Path $backupDirectory "$entryId.bin"
                 $temporaryBackup = Join-Path $backupDirectory (
                     "$entryId.bin.tmp-" + [Guid]::NewGuid().ToString('N')
                 )
                 $bytes = [IO.File]::ReadAllBytes($pathValue)
                 try {
+                    [void](Validate-JournalStoragePath `
+                        -JournalPath $loaded.Path `
+                        -TrustedRoots $trustedRoots `
+                        -IncludeBackupDirectory)
                     Write-DurableFile -Path $temporaryBackup -Bytes $bytes
                     Assert-ManagedJournalPath -Path $pathValue -AllowedRoots $trustedRoots |
                         Out-Null
@@ -1022,6 +1231,11 @@ function Add-FileChange {
                     )) {
                         throw 'File identity changed while creating the backup.'
                     }
+                    [void](Validate-JournalStoragePath `
+                        -JournalPath $loaded.Path `
+                        -TrustedRoots $trustedRoots `
+                        -IncludeBackupDirectory)
+                    Assert-StorageComponentSafe -Path $backupPath
                     [IO.File]::Move($temporaryBackup, $backupPath)
                     $committedBackup = $backupPath
                 }
@@ -1054,7 +1268,8 @@ function Add-FileChange {
             $loaded.Document.Changes = @($loaded.Document.Changes) + @($entry)
             Write-ChangeJournalDocument `
                 -Document $loaded.Document `
-                -JournalPath $loaded.Path
+                -JournalPath $loaded.Path `
+                -TrustedRoots $trustedRoots
             return $entry
         }
         catch {
@@ -1078,9 +1293,17 @@ function Confirm-FileChange {
     )
 
     $journalPath = Get-LexicalJournalPath -Path "$($Journal.JournalPath)"
-    return Invoke-WithChangeJournalLock -JournalPath $journalPath -Action {
-        $loaded = Read-ChangeJournalDocument -Journal $Journal
-        $trustedRoots = Get-TrustedJournalRoots -AllowedRoots $AllowedRoots
+    $trustedRoots = Get-TrustedJournalRoots -AllowedRoots $AllowedRoots
+    [void](Validate-JournalStoragePath `
+        -JournalPath $journalPath `
+        -TrustedRoots $trustedRoots)
+    return Invoke-WithChangeJournalLock `
+        -JournalPath $journalPath `
+        -TrustedRoots $trustedRoots `
+        -Action {
+        $loaded = Read-ChangeJournalDocument `
+            -Journal $Journal `
+            -TrustedRoots $trustedRoots
         $pathValue = Assert-ManagedJournalPath -Path $Path -AllowedRoots $trustedRoots
         $entry = @(
             $loaded.Document.Changes |
@@ -1116,7 +1339,8 @@ function Confirm-FileChange {
         $entry.Confirmed = $true
         Write-ChangeJournalDocument `
             -Document $loaded.Document `
-            -JournalPath $loaded.Path
+            -JournalPath $loaded.Path `
+            -TrustedRoots $trustedRoots
         return $entry
     }
 }
@@ -1134,8 +1358,17 @@ function Add-ExternalChange {
         throw 'Description must not be empty.'
     }
     $journalPath = Get-LexicalJournalPath -Path "$($Journal.JournalPath)"
-    return Invoke-WithChangeJournalLock -JournalPath $journalPath -Action {
-        $loaded = Read-ChangeJournalDocument -Journal $Journal
+    $trustedRoots = Get-TrustedJournalRoots -AllowedRoots $AllowedRoots
+    [void](Validate-JournalStoragePath `
+        -JournalPath $journalPath `
+        -TrustedRoots $trustedRoots)
+    return Invoke-WithChangeJournalLock `
+        -JournalPath $journalPath `
+        -TrustedRoots $trustedRoots `
+        -Action {
+        $loaded = Read-ChangeJournalDocument `
+            -Journal $Journal `
+            -TrustedRoots $trustedRoots
         $entry = [pscustomobject][ordered]@{
             Id = [Guid]::NewGuid().ToString('N')
             Type = 'external'
@@ -1148,7 +1381,8 @@ function Add-ExternalChange {
         $loaded.Document.Changes = @($loaded.Document.Changes) + @($entry)
         Write-ChangeJournalDocument `
             -Document $loaded.Document `
-            -JournalPath $loaded.Path
+            -JournalPath $loaded.Path `
+            -TrustedRoots $trustedRoots
         return $entry
     }
 }
@@ -1156,9 +1390,14 @@ function Add-ExternalChange {
 function Assert-ValidJournalBackup {
     param(
         [Parameter(Mandatory = $true)][object]$Entry,
-        [Parameter(Mandatory = $true)][object]$Loaded
+        [Parameter(Mandatory = $true)][object]$Loaded,
+        [Parameter(Mandatory = $true)][string[]]$TrustedRoots
     )
 
+    [void](Validate-JournalStoragePath `
+        -JournalPath $Loaded.Path `
+        -TrustedRoots $TrustedRoots `
+        -IncludeBackupDirectory)
     $expected = Join-Path (Join-Path $Loaded.Directory 'backups') "$($Entry.Id).bin"
     $expected = Get-LexicalJournalPath -Path $expected
     $actual = Get-LexicalJournalPath -Path $Entry.BackupPath
@@ -1257,7 +1496,10 @@ function Restore-JournalFile {
         return [pscustomobject]@{ Path = $target }
     }
 
-    $backup = Assert-ValidJournalBackup -Entry $Entry -Loaded $Loaded
+    $backup = Assert-ValidJournalBackup `
+        -Entry $Entry `
+        -Loaded $Loaded `
+        -TrustedRoots $TrustedRoots
     $parent = Split-Path -Parent $target
     if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
@@ -1332,9 +1574,17 @@ function Invoke-JournalRollback {
     )
 
     $journalPath = Get-LexicalJournalPath -Path "$($Journal.JournalPath)"
-    return Invoke-WithChangeJournalLock -JournalPath $journalPath -Action {
-        $loaded = Read-ChangeJournalDocument -Journal $Journal
-        $trustedRoots = Get-TrustedJournalRoots -AllowedRoots $AllowedRoots
+    $trustedRoots = Get-TrustedJournalRoots -AllowedRoots $AllowedRoots
+    [void](Validate-JournalStoragePath `
+        -JournalPath $journalPath `
+        -TrustedRoots $trustedRoots)
+    return Invoke-WithChangeJournalLock `
+        -JournalPath $journalPath `
+        -TrustedRoots $trustedRoots `
+        -Action {
+        $loaded = Read-ChangeJournalDocument `
+            -Journal $Journal `
+            -TrustedRoots $trustedRoots
         $succeeded = New-Object 'Collections.Generic.List[object]'
         $failed = New-Object 'Collections.Generic.List[object]'
         $residuals = New-Object 'Collections.Generic.List[object]'
@@ -1380,7 +1630,8 @@ function Invoke-JournalRollback {
                 $entry.RolledBackAtUtc = [DateTime]::UtcNow.ToString('o')
                 Write-ChangeJournalDocument `
                     -Document $loaded.Document `
-                    -JournalPath $loaded.Path
+                    -JournalPath $loaded.Path `
+                    -TrustedRoots $trustedRoots
                 $succeeded.Add([pscustomobject]@{
                     Id = $entry.Id
                     Path = $restored.Path

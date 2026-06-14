@@ -48,5 +48,6 @@
 - 现有 `MCP/servers` 和 `Skills/AgentSkillsforContextEngineering` 将作为首批管理对象，按新项目相同规则进入白名单和验证流程。
 - 联网下载可自动执行；首次按命令前缀申请并保存授权规则。用户目录写入或系统级变更仍需明确授权。
 - `scripts/lib/ChangeJournal.ps1` 已实现严格 Schema v2、DPAPI CurrentUser 完整性认证、操作级跨进程锁、耐久原子写、受信根授权、reparse point 拒绝和文件身份校验。
+- journal 自身存储路径从可信根到 StateRoot、journals、operation、backups、journal/temp/lock 父路径逐级验证；缺失目录逐级创建并在每一级创建后复检。
 - create 与 directory_create 必须在实际创建后调用 `Confirm-FileChange` 记录身份；未确认项回滚时保留并进入 `Residuals`。
 - 外部回滚命令只记录为残留信息，系统不会执行字符串 shell 命令。

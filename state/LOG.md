@@ -60,3 +60,11 @@
 - 路径采用词法规范化，不解析 reparse 目标；从匹配根到目标任一现存组件含 reparse point 即拒绝。
 - create/directory_create 未确认时不得删除；确认后若 VolumeSerial/FileId 不匹配则拒绝。modify 同样要求原始身份匹配，delete 只在目标仍缺失时恢复。
 - DPAPI CurrentUser 不能抵御当前用户账户完全失陷；PowerShell 路径 API 仍无法彻底消除同用户微秒级 TOCTOU，但已修复可复现的替换攻击并在关键操作前重复检查。
+
+## 2026-06-14：Task 5 journal 存储路径加固
+
+- 规格审查发现 journal 内部路径可通过 `.state/journals`、`backups` 或 lock 父路径 junction 写入外部目录。
+- RED：新增存储路径攻击组 7 项时 3 项失败，确认 journals junction、backups junction 和 lock 父路径替换会绕过原边界；外部目录可出现 journal、backup 或 lock 文件。
+- 修复统一使用 `Validate-JournalStoragePath`：所有公开入口在锁前验证，锁、journal temp 和 backup 打开前再次验证。
+- 缺失 StateRoot 及其内部目录从可信根开始逐级创建，每一级创建前后检查词法边界和 ReparsePoint；禁止将 StateRoot 注册为递归删除目标。
+- GREEN：存储攻击组 8/8、Target 49/49、Unit 130/130、Integration 3/3、All 133/133、组合攻击探针 23/23。

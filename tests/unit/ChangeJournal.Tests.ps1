@@ -53,12 +53,14 @@ function Write-TestJournal {
 function Write-TestAuthenticatedJournal {
     param(
         [object]$Journal,
-        [object]$Document
+        [object]$Document,
+        [string]$Root
     )
 
     Write-ChangeJournalDocument `
         -Document $Document `
-        -JournalPath $Journal.JournalPath
+        -JournalPath $Journal.JournalPath `
+        -TrustedRoots (Get-TrustedJournalRoots -AllowedRoots @($Root))
 }
 
 function Invoke-TestRollback {
@@ -162,7 +164,8 @@ Describe 'Change journal persistence' {
         Add-ExternalChange `
             -Journal $journal `
             -Description 'unmanaged installer change' `
-            -RollbackCommand $command
+            -RollbackCommand $command `
+            -AllowedRoots @($root)
         $result = Invoke-TestRollback -Journal $journal -Root $root
 
         (Test-Path -LiteralPath $sentinel) | Should Be $false
@@ -483,7 +486,10 @@ Describe 'Change journal safety boundaries' {
                 -AllowedRoots $roots | Out-Null
             $document = Read-TestJournal -Journal $journal
             $document.Changes[0].Path = $child
-            Write-TestAuthenticatedJournal -Journal $journal -Document $document
+            Write-TestAuthenticatedJournal `
+                -Journal $journal `
+                -Document $document `
+                -Root $parent
             New-Item -ItemType Directory -Path $child -Force | Out-Null
             [IO.File]::WriteAllText((Join-Path $child 'keep.txt'), 'keep')
 
@@ -516,7 +522,10 @@ Describe 'Change journal safety boundaries' {
             -AllowedRoots $roots | Out-Null
         $document = Read-TestJournal -Journal $journal
         $document.Changes[0].Path = $alias
-        Write-TestAuthenticatedJournal -Journal $journal -Document $document
+        Write-TestAuthenticatedJournal `
+            -Journal $journal `
+            -Document $document `
+            -Root $parent
         [IO.File]::WriteAllText((Join-Path $child 'keep.txt'), 'keep')
 
         $result = Invoke-JournalRollback `
@@ -535,7 +544,7 @@ Describe 'Change journal safety boundaries' {
         [IO.File]::WriteAllText($journal.JournalPath, '{broken json')
 
         $message = Get-JournalExceptionMessage {
-            Invoke-JournalRollback -Journal $journal
+            Invoke-JournalRollback -Journal $journal -AllowedRoots @($root)
         }
 
         $message | Should Match 'journal'
@@ -556,7 +565,7 @@ Describe 'Change journal safety boundaries' {
         Write-TestJournal -Journal $journal -Document $document
 
         $message = Get-JournalExceptionMessage {
-            Invoke-JournalRollback -Journal $journal
+            Invoke-JournalRollback -Journal $journal -AllowedRoots @($root)
         }
 
         (Test-Path -LiteralPath $outsidePath -PathType Leaf) | Should Be $true
@@ -664,7 +673,10 @@ Describe 'Authenticated journal attack regressions' {
         $document = Read-TestJournal -Journal $journal
         $document.Changes[0].BackupPath = $document.Changes[1].BackupPath
         $document.Changes[0].BackupSha256 = $document.Changes[1].BackupSha256
-        Write-TestAuthenticatedJournal -Journal $journal -Document $document
+        Write-TestAuthenticatedJournal `
+            -Journal $journal `
+            -Document $document `
+            -Root $root
 
         $result = Invoke-JournalRollback -Journal $journal -AllowedRoots @($root)
 
@@ -808,5 +820,206 @@ Describe 'Authenticated journal attack regressions' {
             Where-Object { $_.Name -match '\.tmp-' }).Count | Should Be 0
         (Get-Content -LiteralPath $journalLibrary -Raw) |
             Should Match '\.Flush\(\$true\)'
+    }
+}
+
+Describe 'Journal storage path attacks' {
+    BeforeAll {
+        . $journalLibrary
+    }
+
+    It 'rejects a state root junction before creating journal files' {
+        $root = Join-Path $TestDrive 'state-junction-root'
+        $outside = Join-Path $TestDrive 'state-junction-outside'
+        New-Item -ItemType Directory -Path $root, $outside | Out-Null
+        New-Item -ItemType Junction -Path (Join-Path $root '.state') -Target $outside |
+            Out-Null
+
+        $message = Get-JournalExceptionMessage {
+            New-TestJournal -Root $root -OperationId 'state-junction'
+        }
+
+        $message | Should Match 'reparse|junction'
+        @(Get-ChildItem -LiteralPath $outside -Force).Count | Should Be 0
+    }
+
+    It 'rejects a journals directory junction before creating operation files' {
+        $root = Join-Path $TestDrive 'journals-junction-root'
+        $outside = Join-Path $TestDrive 'journals-junction-outside'
+        $state = Join-Path $root '.state'
+        New-Item -ItemType Directory -Path $state, $outside -Force | Out-Null
+        New-Item -ItemType Junction -Path (Join-Path $state 'journals') -Target $outside |
+            Out-Null
+
+        $message = Get-JournalExceptionMessage {
+            New-TestJournal -Root $root -OperationId 'journals-junction'
+        }
+
+        $message | Should Match 'reparse|junction'
+        @(Get-ChildItem -LiteralPath $outside -Force).Count | Should Be 0
+    }
+
+    It 'rejects a backups directory junction before creating backup files' {
+        $root = Join-Path $TestDrive 'backups-junction-root'
+        $outside = Join-Path $TestDrive 'backups-junction-outside'
+        New-Item -ItemType Directory -Path $root, $outside | Out-Null
+        $path = Join-Path $root 'modified.txt'
+        [IO.File]::WriteAllText($path, 'original')
+        $journal = New-TestJournal -Root $root -OperationId 'backups-junction'
+        $operationDirectory = Split-Path -Parent $journal.JournalPath
+        New-Item -ItemType Junction `
+            -Path (Join-Path $operationDirectory 'backups') `
+            -Target $outside | Out-Null
+
+        $message = Get-JournalExceptionMessage {
+            Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind modify
+        }
+
+        $message | Should Match 'reparse|junction'
+        @(Get-ChildItem -LiteralPath $outside -Force).Count | Should Be 0
+    }
+
+    It 'rejects a reparse lock path before opening it for every journal entry point' {
+        foreach ($entryPoint in @('Add', 'Confirm', 'External', 'Rollback')) {
+            $root = Join-Path $TestDrive "lock-junction-$entryPoint"
+            $outside = Join-Path $TestDrive "lock-junction-outside-$entryPoint"
+            New-Item -ItemType Directory -Path $root, $outside | Out-Null
+            $path = Join-Path $root 'created.txt'
+            $operationId = "lock-junction-$($entryPoint.ToLowerInvariant())"
+            $journal = New-TestJournal -Root $root -OperationId $operationId
+            if ($entryPoint -eq 'Confirm') {
+                Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind create |
+                    Out-Null
+                [IO.File]::WriteAllText($path, 'created')
+            }
+            $lockPath = Join-Path (
+                Split-Path -Parent (Split-Path -Parent $journal.JournalPath)
+            ) "$operationId.lock"
+            Remove-Item -LiteralPath $lockPath -Force
+            New-Item -ItemType Junction -Path $lockPath -Target $outside | Out-Null
+
+            $message = Get-JournalExceptionMessage {
+                switch ($entryPoint) {
+                    'Add' {
+                        Add-TestFileChange `
+                            -Journal $journal `
+                            -Root $root `
+                            -Path $path `
+                            -Kind create | Out-Null
+                    }
+                    'Confirm' {
+                        Confirm-TestFileChange `
+                            -Journal $journal `
+                            -Root $root `
+                            -Path $path | Out-Null
+                    }
+                    'External' {
+                        Add-ExternalChange `
+                            -Journal $journal `
+                            -Description 'external' `
+                            -RollbackCommand '' `
+                            -AllowedRoots @($root) | Out-Null
+                    }
+                    'Rollback' {
+                        Invoke-TestRollback -Journal $journal -Root $root | Out-Null
+                    }
+                }
+            }
+
+            $message | Should Match 'reparse|junction'
+            @(Get-ChildItem -LiteralPath $outside -Force).Count | Should Be 0
+        }
+    }
+
+    It 'rejects replacement of the lock parent before creating an external lock file' {
+        $root = Join-Path $TestDrive 'lock-parent-root'
+        $outside = Join-Path $TestDrive 'lock-parent-outside'
+        New-Item -ItemType Directory -Path $root, $outside | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'lock-parent'
+        $journalsDirectory = Split-Path -Parent (
+            Split-Path -Parent $journal.JournalPath
+        )
+        Remove-Item -LiteralPath $journalsDirectory -Recurse -Force
+        New-Item -ItemType Junction -Path $journalsDirectory -Target $outside | Out-Null
+
+        $message = Get-JournalExceptionMessage {
+            Add-ExternalChange `
+                -Journal $journal `
+                -Description 'external' `
+                -RollbackCommand '' `
+                -AllowedRoots @($root) | Out-Null
+        }
+
+        $message | Should Match 'reparse|junction'
+        @(Get-ChildItem -LiteralPath $outside -Force).Count | Should Be 0
+    }
+
+    It 'rejects an operation directory junction before journal or temp access' {
+        $root = Join-Path $TestDrive 'operation-parent-root'
+        $outside = Join-Path $TestDrive 'operation-parent-outside'
+        New-Item -ItemType Directory -Path $root, $outside | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'operation-parent'
+        $operationDirectory = Split-Path -Parent $journal.JournalPath
+        Remove-Item -LiteralPath $operationDirectory -Recurse -Force
+        New-Item -ItemType Junction -Path $operationDirectory -Target $outside |
+            Out-Null
+
+        $message = Get-JournalExceptionMessage {
+            Add-ExternalChange `
+                -Journal $journal `
+                -Description 'external' `
+                -RollbackCommand '' `
+                -AllowedRoots @($root) | Out-Null
+        }
+
+        $message | Should Match 'reparse|junction'
+        @(Get-ChildItem -LiteralPath $outside -Force).Count | Should Be 0
+    }
+
+    It 'does not register the state root as a recursive deletion target' {
+        $root = Join-Path $TestDrive 'state-delete-target'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'state-delete-target'
+        $stateRoot = Join-Path $root '.state'
+
+        $message = Get-JournalExceptionMessage {
+            Add-TestFileChange `
+                -Journal $journal `
+                -Root $root `
+                -Path $stateRoot `
+                -Kind directory_create | Out-Null
+        }
+
+        $message | Should Match 'state|journal|storage|root'
+    }
+
+    It 'creates missing journal storage directories one level at a time' {
+        $root = Join-Path $TestDrive 'missing-storage'
+        $codexRoot = Join-Path $root '.codex-test'
+        $stateRoot = Join-Path $root 'level-one\level-two\.state'
+        New-Item -ItemType Directory -Path $root, $codexRoot | Out-Null
+
+        $journal = New-ChangeJournal `
+            -OperationId 'missing-storage' `
+            -AllowedRoots @($root) `
+            -WorkspaceRoot $root `
+            -CodexRoot $codexRoot `
+            -StateRoot $stateRoot
+
+        foreach ($path in @(
+            (Join-Path $root 'level-one'),
+            (Join-Path $root 'level-one\level-two'),
+            $stateRoot,
+            (Join-Path $stateRoot 'journals'),
+            (Join-Path $stateRoot 'journals\missing-storage')
+        )) {
+            (Test-Path -LiteralPath $path -PathType Container) | Should Be $true
+            (
+                [IO.File]::GetAttributes($path) -band
+                [IO.FileAttributes]::ReparsePoint
+            ) | Should Be 0
+        }
+        (Test-Path -LiteralPath $journal.JournalPath -PathType Leaf) |
+            Should Be $true
     }
 }
