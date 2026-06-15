@@ -92,6 +92,10 @@ public static class ChangeJournalRuntime
 
 public sealed class ChangeJournalJsonScanner
 {
+    private const int MaxDepth = 64;
+    private const int MaxNodes = 10000;
+    private const int MaxStringLength = 1024 * 1024;
+    private const int MaxCharacters = 8 * 1024 * 1024;
     private readonly string text;
     private int index;
     private bool duplicateFound;
@@ -104,21 +108,126 @@ public sealed class ChangeJournalJsonScanner
 
     public static bool HasDuplicateProperties(string json)
     {
+        PreScan(json);
         ChangeJournalJsonScanner parser = new ChangeJournalJsonScanner(json);
-        parser.ParseValue();
+        parser.ParseValue(0);
         parser.SkipWhitespace();
         if (parser.index != parser.text.Length) throw new FormatException();
         return parser.duplicateFound;
     }
 
-    private void ParseValue()
+    private static void PreScan(string json)
+    {
+        if (json == null) throw new ArgumentNullException("json");
+        if (json.Length > MaxCharacters) throw new InvalidOperationException("too complex");
+
+        int depth = 0;
+        int nodes = 0;
+        int stringLength = 0;
+        bool inString = false;
+        bool escaped = false;
+        bool inPrimitive = false;
+        bool lastTokenWasString = false;
+        for (int position = 0; position < json.Length; position++)
+        {
+            char character = json[position];
+            if (inString)
+            {
+                if (escaped)
+                {
+                    escaped = false;
+                    if (character == 'u')
+                    {
+                        if (position + 4 >= json.Length) throw new FormatException();
+                        position += 4;
+                    }
+                    stringLength++;
+                    if (stringLength > MaxStringLength)
+                        throw new InvalidOperationException("too complex");
+                    continue;
+                }
+                if (character == '\\')
+                {
+                    escaped = true;
+                    continue;
+                }
+                if (character == '"')
+                {
+                    inString = false;
+                    nodes++;
+                    lastTokenWasString = true;
+                    continue;
+                }
+                if (character < 0x20) throw new FormatException();
+                stringLength++;
+                if (stringLength > MaxStringLength)
+                    throw new InvalidOperationException("too complex");
+                continue;
+            }
+
+            if (inPrimitive)
+            {
+                if (
+                    Char.IsWhiteSpace(character) ||
+                    character == ',' ||
+                    character == ']' ||
+                    character == '}'
+                ) {
+                    inPrimitive = false;
+                }
+                else {
+                    continue;
+                }
+            }
+
+            if (character == '"')
+            {
+                inString = true;
+                stringLength = 0;
+                lastTokenWasString = false;
+            }
+            else if (character == '{' || character == '[')
+            {
+                depth++;
+                nodes++;
+                lastTokenWasString = false;
+                if (depth > MaxDepth)
+                    throw new InvalidOperationException("too complex");
+            }
+            else if (character == '}' || character == ']')
+            {
+                depth--;
+                lastTokenWasString = false;
+                if (depth < 0) throw new FormatException();
+            }
+            else if (character == ':')
+            {
+                if (lastTokenWasString) nodes--;
+                lastTokenWasString = false;
+            }
+            else if (character == ',')
+            {
+                lastTokenWasString = false;
+            }
+            else if (!Char.IsWhiteSpace(character))
+            {
+                nodes++;
+                inPrimitive = true;
+                lastTokenWasString = false;
+            }
+        }
+        if (inString || escaped || depth != 0) throw new FormatException();
+        if (nodes > MaxNodes) throw new InvalidOperationException("too complex");
+    }
+
+    private void ParseValue(int depth)
     {
         SkipWhitespace();
         if (index >= text.Length) throw new FormatException();
         switch (text[index])
         {
-            case '{': ParseObject(); return;
-            case '[': ParseArray(); return;
+            case '{': ParseObject(depth + 1); return;
+            case '[': ParseArray(depth + 1); return;
             case '"': ParseString(); return;
             case 't': ParseLiteral("true"); return;
             case 'f': ParseLiteral("false"); return;
@@ -127,8 +236,9 @@ public sealed class ChangeJournalJsonScanner
         }
     }
 
-    private void ParseObject()
+    private void ParseObject(int depth)
     {
+        if (depth > MaxDepth) throw new InvalidOperationException("too complex");
         index++;
         SkipWhitespace();
         HashSet<string> names = new HashSet<string>(StringComparer.Ordinal);
@@ -140,21 +250,22 @@ public sealed class ChangeJournalJsonScanner
             if (!names.Add(name)) duplicateFound = true;
             SkipWhitespace();
             Require(':');
-            ParseValue();
+            ParseValue(depth);
             SkipWhitespace();
             if (Consume('}')) return;
             Require(',');
         }
     }
 
-    private void ParseArray()
+    private void ParseArray(int depth)
     {
+        if (depth > MaxDepth) throw new InvalidOperationException("too complex");
         index++;
         SkipWhitespace();
         if (Consume(']')) return;
         while (true)
         {
-            ParseValue();
+            ParseValue(depth);
             SkipWhitespace();
             if (Consume(']')) return;
             Require(',');
@@ -173,6 +284,8 @@ public sealed class ChangeJournalJsonScanner
             if (character != '\\')
             {
                 value.Append(character);
+                if (value.Length > MaxStringLength)
+                    throw new InvalidOperationException("too complex");
                 continue;
             }
             if (index >= text.Length) throw new FormatException();
@@ -201,6 +314,8 @@ public sealed class ChangeJournalJsonScanner
                     break;
                 default: throw new FormatException();
             }
+            if (value.Length > MaxStringLength)
+                throw new InvalidOperationException("too complex");
         }
         throw new FormatException();
     }
@@ -623,16 +738,98 @@ function Assert-ChangeJournalDocument {
 function ConvertTo-ChangeJournalPayload {
     param([Parameter(Mandatory = $true)][object]$Document)
 
+    $changes = @(
+        foreach ($entry in @($Document.Changes)) {
+            if ($entry.Type -ceq 'external') {
+                [pscustomobject][ordered]@{
+                    Id = [string]$entry.Id
+                    Type = [string]$entry.Type
+                    Description = [string]$entry.Description
+                    RollbackCommand = [string]$entry.RollbackCommand
+                    RecordedAtUtc = [string]$entry.RecordedAtUtc
+                    RolledBack = [bool]$entry.RolledBack
+                    RolledBackAtUtc = if ($null -eq $entry.RolledBackAtUtc) {
+                        $null
+                    }
+                    else {
+                        [string]$entry.RolledBackAtUtc
+                    }
+                }
+                continue
+            }
+
+            $metadata = if ($null -eq $entry.Metadata) {
+                $null
+            }
+            else {
+                [pscustomobject][ordered]@{
+                    Attributes = [int]$entry.Metadata.Attributes
+                    CreationTimeUtc = [string]$entry.Metadata.CreationTimeUtc
+                    LastWriteTimeUtc = [string]$entry.Metadata.LastWriteTimeUtc
+                    LastAccessTimeUtc = [string]$entry.Metadata.LastAccessTimeUtc
+                }
+            }
+            $originalIdentity = if ($null -eq $entry.OriginalIdentity) {
+                $null
+            }
+            else {
+                [pscustomobject][ordered]@{
+                    VolumeSerial = [string]$entry.OriginalIdentity.VolumeSerial
+                    FileId = [string]$entry.OriginalIdentity.FileId
+                }
+            }
+            $confirmedIdentity = if ($null -eq $entry.ConfirmedIdentity) {
+                $null
+            }
+            else {
+                [pscustomobject][ordered]@{
+                    VolumeSerial = [string]$entry.ConfirmedIdentity.VolumeSerial
+                    FileId = [string]$entry.ConfirmedIdentity.FileId
+                }
+            }
+            [pscustomobject][ordered]@{
+                Id = [string]$entry.Id
+                Type = [string]$entry.Type
+                Kind = [string]$entry.Kind
+                Path = [string]$entry.Path
+                BackupPath = if ($null -eq $entry.BackupPath) {
+                    $null
+                }
+                else {
+                    [string]$entry.BackupPath
+                }
+                BackupSha256 = if ($null -eq $entry.BackupSha256) {
+                    $null
+                }
+                else {
+                    [string]$entry.BackupSha256
+                }
+                Metadata = $metadata
+                OriginalIdentity = $originalIdentity
+                Confirmed = [bool]$entry.Confirmed
+                ConfirmedIdentity = $confirmedIdentity
+                RecordedAtUtc = [string]$entry.RecordedAtUtc
+                RolledBack = [bool]$entry.RolledBack
+                RolledBackAtUtc = if ($null -eq $entry.RolledBackAtUtc) {
+                    $null
+                }
+                else {
+                    [string]$entry.RolledBackAtUtc
+                }
+            }
+        }
+    )
     return [pscustomobject][ordered]@{
-        Schema = $Document.Schema
-        Version = $Document.Version
-        OperationId = $Document.OperationId
-        WorkspaceRoot = $Document.WorkspaceRoot
-        JournalDirectory = $Document.JournalDirectory
-        AllowedRoots = @($Document.AllowedRoots)
-        CreatedAtUtc = $Document.CreatedAtUtc
-        UpdatedAtUtc = $Document.UpdatedAtUtc
-        Changes = @($Document.Changes)
+        Schema = [string]$Document.Schema
+        Version = [int]$Document.Version
+        OperationId = [string]$Document.OperationId
+        WorkspaceRoot = [string]$Document.WorkspaceRoot
+        JournalDirectory = [string]$Document.JournalDirectory
+        # AllowedRoots order is semantic and is preserved exactly.
+        AllowedRoots = @($Document.AllowedRoots | ForEach-Object { [string]$_ })
+        CreatedAtUtc = [string]$Document.CreatedAtUtc
+        UpdatedAtUtc = [string]$Document.UpdatedAtUtc
+        Changes = $changes
     }
 }
 
@@ -1005,11 +1202,20 @@ function Read-ChangeJournalDocument {
     if (-not (Test-Path -LiteralPath $journalPath -PathType Leaf)) {
         throw "Change journal does not exist: $journalPath"
     }
+    if ((Get-Item -LiteralPath $journalPath -Force).Length -gt 8MB) {
+        throw 'Change journal is invalid or too complex.'
+    }
     $json = [IO.File]::ReadAllText($journalPath)
     try {
         $hasDuplicates = [ChangeJournalJsonScanner]::HasDuplicateProperties($json)
     }
     catch {
+        if (
+            $_.Exception.InnerException -is [InvalidOperationException] -or
+            $_.Exception -is [InvalidOperationException]
+        ) {
+            throw 'Change journal is invalid or too complex.'
+        }
         throw "Change journal is corrupted or invalid: $journalPath"
     }
     if ($hasDuplicates) {

@@ -1023,3 +1023,332 @@ Describe 'Journal storage path attacks' {
             Should Be $true
     }
 }
+
+Describe 'Journal parsing bounds and canonical integrity' {
+    BeforeAll {
+        . $journalLibrary
+    }
+
+    It 'rejects JSON nesting depth sixty-five before recursive parsing' {
+        $root = Join-Path $TestDrive 'depth-65'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'depth-65'
+        $json = ('[' * 65) + '0' + (']' * 65)
+        [IO.File]::WriteAllText($journal.JournalPath, $json)
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root
+        }
+
+        $message | Should Match 'journal.*(invalid|complex)|too complex'
+    }
+
+    It 'allows depth sixty-four through the resource scan before schema rejection' {
+        $root = Join-Path $TestDrive 'depth-64'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'depth-64'
+        $json = ('[' * 64) + '0' + (']' * 64)
+        [IO.File]::WriteAllText($journal.JournalPath, $json)
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root
+        }
+
+        $message | Should Match 'schema|property|journal'
+        $message | Should Not Match 'too complex'
+    }
+
+    It 'ignores structural characters and escapes inside JSON strings' {
+        $root = Join-Path $TestDrive 'scanner-strings'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'scanner-strings'
+        Add-ExternalChange `
+            -Journal $journal `
+            -Description ('[{"quoted":"value"}] ' + ('\"' * 128)) `
+            -RollbackCommand 'record only' `
+            -AllowedRoots @($root) | Out-Null
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root | Out-Null
+        }
+
+        $message | Should BeNullOrEmpty
+    }
+
+    It 'rejects journal strings longer than one MiB' {
+        $root = Join-Path $TestDrive 'long-string'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'long-string'
+        $json = '{"value":"' + ('x' * (1MB + 1)) + '"}'
+        [IO.File]::WriteAllText($journal.JournalPath, $json)
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root
+        }
+
+        $message | Should Match 'journal.*(invalid|complex)|too complex'
+    }
+
+    It 'rejects journals with more than ten thousand container nodes' {
+        $root = Join-Path $TestDrive 'node-limit'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'node-limit'
+        $json = '[' + ((1..10001 | ForEach-Object { '[]' }) -join ',') + ']'
+        [IO.File]::WriteAllText($journal.JournalPath, $json)
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root
+        }
+
+        $message | Should Match 'journal.*(invalid|complex)|too complex'
+    }
+
+    It 'rejects journals with more than ten thousand scalar value nodes' {
+        $root = Join-Path $TestDrive 'scalar-node-limit'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'scalar-node-limit'
+        $json = '[' + ((1..10001) -join ',') + ']'
+        [IO.File]::WriteAllText($journal.JournalPath, $json)
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root
+        }
+
+        $message | Should Match 'journal.*(invalid|complex)|too complex'
+    }
+
+    It 'rejects journal files larger than eight MiB' {
+        $root = Join-Path $TestDrive 'file-limit'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'file-limit'
+        $stream = [IO.File]::Open(
+            $journal.JournalPath,
+            [IO.FileMode]::Create,
+            [IO.FileAccess]::Write,
+            [IO.FileShare]::None
+        )
+        try {
+            $stream.SetLength(8MB + 1)
+        }
+        finally {
+            $stream.Dispose()
+        }
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root
+        }
+
+        $message | Should Match 'journal.*(invalid|large|complex)|too complex'
+    }
+
+    It 'rejects depth two hundred fifty thousand in an isolated process without crashing' {
+        $root = Join-Path $TestDrive 'depth-isolated'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'depth-isolated'
+        $json = ('[' * 250000) + '0' + (']' * 250000)
+        [IO.File]::WriteAllText($journal.JournalPath, $json)
+        $runner = Join-Path $root 'depth-runner.ps1'
+        $messagePath = Join-Path $root 'depth-message.txt'
+        $runnerText = @'
+param(
+    [string]$Library,
+    [string]$JournalPath,
+    [string]$AllowedRoot,
+    [string]$MessagePath
+)
+. $Library
+try {
+    Invoke-JournalRollback `
+        -Journal ([pscustomobject]@{ JournalPath = $JournalPath }) `
+        -AllowedRoots @($AllowedRoot) | Out-Null
+    exit 3
+}
+catch {
+    [IO.File]::WriteAllText($MessagePath, $_.Exception.Message)
+    exit 0
+}
+'@
+        Set-Content -LiteralPath $runner -Value $runnerText -Encoding UTF8
+
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
+            -Library $journalLibrary `
+            -JournalPath $journal.JournalPath `
+            -AllowedRoot $root `
+            -MessagePath $messagePath
+        $exitCode = $LASTEXITCODE
+
+        $exitCode | Should Be 0
+        [IO.File]::ReadAllText($messagePath) |
+            Should Match 'journal.*(invalid|complex)|too complex'
+    }
+
+    It 'accepts harmless root entry metadata and identity property reordering' {
+        $root = Join-Path $TestDrive 'canonical-reorder'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $path = Join-Path $root 'modified.txt'
+        [IO.File]::WriteAllText($path, 'original')
+        $journal = New-TestJournal -Root $root -OperationId 'canonical-reorder'
+        Add-TestFileChange -Journal $journal -Root $root -Path $path -Kind modify |
+            Out-Null
+        $createdPath = Join-Path $root 'created.txt'
+        Add-TestFileChange `
+            -Journal $journal `
+            -Root $root `
+            -Path $createdPath `
+            -Kind create | Out-Null
+        [IO.File]::WriteAllText($createdPath, 'created')
+        Confirm-TestFileChange -Journal $journal -Root $root -Path $createdPath
+        $document = Read-TestJournal -Journal $journal
+        $entry = $document.Changes[0]
+        $createdEntry = $document.Changes[1]
+        $metadata = [pscustomobject][ordered]@{
+            LastAccessTimeUtc = $entry.Metadata.LastAccessTimeUtc
+            LastWriteTimeUtc = $entry.Metadata.LastWriteTimeUtc
+            CreationTimeUtc = $entry.Metadata.CreationTimeUtc
+            Attributes = $entry.Metadata.Attributes
+        }
+        $identity = [pscustomobject][ordered]@{
+            FileId = $entry.OriginalIdentity.FileId
+            VolumeSerial = $entry.OriginalIdentity.VolumeSerial
+        }
+        $confirmedIdentity = [pscustomobject][ordered]@{
+            FileId = $createdEntry.ConfirmedIdentity.FileId
+            VolumeSerial = $createdEntry.ConfirmedIdentity.VolumeSerial
+        }
+        $reorderedEntry = [pscustomobject][ordered]@{
+            RolledBackAtUtc = $entry.RolledBackAtUtc
+            RolledBack = $entry.RolledBack
+            RecordedAtUtc = $entry.RecordedAtUtc
+            ConfirmedIdentity = $entry.ConfirmedIdentity
+            Confirmed = $entry.Confirmed
+            OriginalIdentity = $identity
+            Metadata = $metadata
+            BackupSha256 = $entry.BackupSha256
+            BackupPath = $entry.BackupPath
+            Path = $entry.Path
+            Kind = $entry.Kind
+            Type = $entry.Type
+            Id = $entry.Id
+        }
+        $reorderedCreatedEntry = [pscustomobject][ordered]@{
+            RolledBackAtUtc = $createdEntry.RolledBackAtUtc
+            RolledBack = $createdEntry.RolledBack
+            RecordedAtUtc = $createdEntry.RecordedAtUtc
+            ConfirmedIdentity = $confirmedIdentity
+            Confirmed = $createdEntry.Confirmed
+            OriginalIdentity = $createdEntry.OriginalIdentity
+            Metadata = $createdEntry.Metadata
+            BackupSha256 = $createdEntry.BackupSha256
+            BackupPath = $createdEntry.BackupPath
+            Path = $createdEntry.Path
+            Kind = $createdEntry.Kind
+            Type = $createdEntry.Type
+            Id = $createdEntry.Id
+        }
+        $reordered = [pscustomobject][ordered]@{
+            Integrity = $document.Integrity
+            Changes = @($reorderedEntry, $reorderedCreatedEntry)
+            UpdatedAtUtc = $document.UpdatedAtUtc
+            CreatedAtUtc = $document.CreatedAtUtc
+            AllowedRoots = @($document.AllowedRoots)
+            JournalDirectory = $document.JournalDirectory
+            WorkspaceRoot = $document.WorkspaceRoot
+            OperationId = $document.OperationId
+            Version = $document.Version
+            Schema = $document.Schema
+        }
+        $encoding = New-Object Text.UTF8Encoding($false)
+        [IO.File]::WriteAllText(
+            $journal.JournalPath,
+            ($reordered | ConvertTo-Json -Depth 20 -Compress),
+            $encoding
+        )
+
+        $message = Get-JournalExceptionMessage {
+            Add-ExternalChange `
+                -Journal $journal `
+                -Description 'after reorder' `
+                -RollbackCommand '' `
+                -AllowedRoots @($root) | Out-Null
+        }
+
+        $message | Should BeNullOrEmpty
+    }
+
+    It 'accepts harmless external entry reordering and JSON whitespace' {
+        $root = Join-Path $TestDrive 'canonical-external'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'canonical-external'
+        Add-ExternalChange `
+            -Journal $journal `
+            -Description 'external change' `
+            -RollbackCommand 'record only' `
+            -AllowedRoots @($root) | Out-Null
+        $document = Read-TestJournal -Journal $journal
+        $entry = $document.Changes[0]
+        $reorderedEntry = [pscustomobject][ordered]@{
+            RolledBackAtUtc = $entry.RolledBackAtUtc
+            RolledBack = $entry.RolledBack
+            RecordedAtUtc = $entry.RecordedAtUtc
+            RollbackCommand = $entry.RollbackCommand
+            Description = $entry.Description
+            Type = $entry.Type
+            Id = $entry.Id
+        }
+        $reordered = [pscustomobject][ordered]@{
+            Integrity = $document.Integrity
+            Changes = @($reorderedEntry)
+            UpdatedAtUtc = $document.UpdatedAtUtc
+            CreatedAtUtc = $document.CreatedAtUtc
+            AllowedRoots = @($document.AllowedRoots)
+            JournalDirectory = $document.JournalDirectory
+            WorkspaceRoot = $document.WorkspaceRoot
+            OperationId = $document.OperationId
+            Version = $document.Version
+            Schema = $document.Schema
+        }
+        $encoding = New-Object Text.UTF8Encoding($false)
+        [IO.File]::WriteAllText(
+            $journal.JournalPath,
+            ($reordered | ConvertTo-Json -Depth 20),
+            $encoding
+        )
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root | Out-Null
+        }
+
+        $message | Should BeNullOrEmpty
+    }
+
+    It 'rejects a value change after harmless property reordering' {
+        $root = Join-Path $TestDrive 'canonical-value-change'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $journal = New-TestJournal -Root $root -OperationId 'canonical-value-change'
+        $document = Read-TestJournal -Journal $journal
+        $reordered = [pscustomobject][ordered]@{
+            Integrity = $document.Integrity
+            Changes = @($document.Changes)
+            UpdatedAtUtc = '2001-01-01T00:00:00.0000000Z'
+            CreatedAtUtc = $document.CreatedAtUtc
+            AllowedRoots = @($document.AllowedRoots)
+            JournalDirectory = $document.JournalDirectory
+            WorkspaceRoot = $document.WorkspaceRoot
+            OperationId = $document.OperationId
+            Version = $document.Version
+            Schema = $document.Schema
+        }
+        $encoding = New-Object Text.UTF8Encoding($false)
+        [IO.File]::WriteAllText(
+            $journal.JournalPath,
+            ($reordered | ConvertTo-Json -Depth 20 -Compress),
+            $encoding
+        )
+
+        $message = Get-JournalExceptionMessage {
+            Invoke-TestRollback -Journal $journal -Root $root
+        }
+
+        $message | Should Match 'integrity'
+    }
+}

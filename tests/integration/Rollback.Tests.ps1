@@ -71,7 +71,7 @@ if (@($result.Failed).Count -gt 0) { exit 1 }
         (Test-Path -LiteralPath $resultPath -PathType Leaf) | Should Be $true
     }
 
-    It 'does not lose entries from sixteen concurrent writers' {
+    It 'does not lose entries from thirty-two concurrent writers' {
         $root = Join-Path $TestDrive 'concurrent'
         $stateRoot = Join-Path $root '.state'
         $codexRoot = Join-Path $root '.codex-test'
@@ -90,7 +90,7 @@ Add-ExternalChange -Journal $journal -Description $Description -RollbackCommand 
 '@
         Set-Content -LiteralPath $runner -Value $runnerText -Encoding UTF8
         $processes = @(
-            1..16 | ForEach-Object {
+            1..32 | ForEach-Object {
                 Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList @(
                     '-NoProfile',
                     '-ExecutionPolicy', 'Bypass',
@@ -106,6 +106,6 @@ Add-ExternalChange -Journal $journal -Description $Description -RollbackCommand 
 
         @($processes | Where-Object { $_.ExitCode -ne 0 }).Count | Should Be 0
         $document = Get-Content -LiteralPath $journal.JournalPath -Raw | ConvertFrom-Json
-        @($document.Changes).Count | Should Be 16
+        @($document.Changes).Count | Should Be 32
     }
 }
