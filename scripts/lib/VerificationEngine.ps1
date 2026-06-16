@@ -71,6 +71,15 @@ function Get-VerificationArray {
     return @($Value)
 }
 
+function Get-VerificationSensitiveRedactions {
+    param([object]$Tool)
+
+    $redactions = Get-VerificationArray -Value (
+        Get-VerificationMemberValue -Object $Tool -Names @('SensitiveRedactions', 'sensitive_redactions')
+    )
+    return @($redactions | Where-Object { -not [string]::IsNullOrEmpty([string]$_) })
+}
+
 function New-VerificationResult {
     param(
         [Parameter(Mandatory = $true)]
@@ -109,6 +118,20 @@ function New-VerificationResult {
         $finishedAt = $StartedAt
     }
 
+    $redactions = @(Get-VerificationArray -Value $SensitiveRedactions)
+    $safeChecks = @()
+    foreach ($check in @(Get-VerificationArray -Value $Checks)) {
+        $safeChecks += Protect-VerificationText -Text ([string]$check) -SensitiveValues $redactions
+    }
+    $safeResiduals = @()
+    foreach ($residual in @(Get-VerificationArray -Value $Residuals)) {
+        $safeResiduals += Protect-VerificationText -Text ([string]$residual) -SensitiveValues $redactions
+    }
+    $safeErrorCode = $ErrorCode
+    if ($null -ne $safeErrorCode) {
+        $safeErrorCode = Protect-VerificationText -Text ([string]$safeErrorCode) -SensitiveValues $redactions
+    }
+
     return [pscustomobject][ordered]@{
         ToolId = Get-VerificationString -Object $Tool -Names @('id', 'ToolId')
         Name = Get-VerificationString -Object $Tool -Names @('name', 'Name')
@@ -117,13 +140,13 @@ function New-VerificationResult {
         Source = Get-VerificationString -Object $Tool -Names @('source', 'Source')
         Level = $Level
         Status = $Status
-        Message = $Message
+        Message = Protect-VerificationText -Text $Message -SensitiveValues $redactions
         StartedAt = $StartedAt.ToUniversalTime()
         FinishedAt = $finishedAt.ToUniversalTime()
-        Checks = @(Get-VerificationArray -Value $Checks)
-        Residuals = @(Get-VerificationArray -Value $Residuals)
-        SensitiveRedactions = @(Get-VerificationArray -Value $SensitiveRedactions)
-        ErrorCode = $ErrorCode
+        Checks = @($safeChecks)
+        Residuals = @($safeResiduals)
+        SensitiveRedactions = @($redactions)
+        ErrorCode = $safeErrorCode
     }
 }
 
@@ -226,10 +249,12 @@ function ConvertTo-VerificationResultFromAdapter {
         -AdapterResult $AdapterResult `
         -Name 'Residuals' `
         -DefaultValue @()
-    $sensitiveRedactions = Get-VerificationAdapterResultValue `
+    $sensitiveRedactions = @(Get-VerificationSensitiveRedactions -Tool $Tool) + @(
+        Get-VerificationAdapterResultValue `
         -AdapterResult $AdapterResult `
         -Name 'SensitiveRedactions' `
         -DefaultValue @()
+    )
     $errorCode = Get-VerificationAdapterResultValue `
         -AdapterResult $AdapterResult `
         -Name 'ErrorCode' `
@@ -399,6 +424,7 @@ function Invoke-LoadVerification {
             -Message $_.Exception.Message `
             -StartedAt $startedAt `
             -Checks @($staticResult.Checks) `
+            -SensitiveRedactions (Get-VerificationSensitiveRedactions -Tool $Tool) `
             -ErrorCode 'load_verifier_exception'
     }
 

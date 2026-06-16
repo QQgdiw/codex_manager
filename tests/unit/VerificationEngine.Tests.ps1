@@ -243,6 +243,23 @@ Describe 'Layered tool verification' {
         $result.ErrorCode | Should Be 'load_failed'
     }
 
+    It 'redacts sensitive values from load verifier exceptions before returning results' {
+        $sensitive = New-TestSensitiveValue
+        $apiLabel = 'api' + '_' + 'key'
+        $apiValue = -join @([char]0x0061, [char]0x0062, [char]0x0063, [char]0x0031, [char]0x0032, [char]0x0033)
+        $tool = New-TestVerificationTool `
+            -LoadVerifier { throw "load exploded $sensitive ${apiLabel}=$apiValue" }
+        $tool | Add-Member -NotePropertyName SensitiveRedactions -NotePropertyValue @($sensitive)
+
+        $result = Invoke-LoadVerification -Tool $tool
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'load_verifier_exception'
+        $result.Message.Contains($sensitive) | Should Be $false
+        $result.Message.Contains($apiValue) | Should Be $false
+        ($result.Message -match '\[REDACTED\]') | Should Be $true
+    }
+
     It 'returns blocked for smoke verification when load verification has not passed' {
         $tool = New-TestVerificationTool `
             -LoadVerifier { @{ Status = 'failed'; Message = 'load failed'; ErrorCode = 'load_failed' } } `
@@ -284,6 +301,18 @@ Describe 'Layered tool verification' {
 
         $result.Status | Should Be 'failed'
         $result.ErrorCode | Should Be 'smoke_failed'
+    }
+
+    It 'redacts sensitive values from adapter result messages before returning results' {
+        $sensitive = New-TestSensitiveValue
+        $tool = New-TestVerificationTool `
+            -LoadVerifier { @{ Status = 'load_verified'; Message = "loaded $sensitive"; SensitiveRedactions = @($sensitive) } }
+
+        $result = Invoke-LoadVerification -Tool $tool
+
+        $result.Status | Should Be 'load_verified'
+        $result.Message.Contains($sensitive) | Should Be $false
+        ($result.Message -match '\[REDACTED\]') | Should Be $true
     }
 
     It 'rejects statuses outside the verification enum' {
