@@ -13,7 +13,8 @@ function New-TestVerificationTool {
         [string[]]$Paths = @(),
         [string[]]$Commands = @(),
         [scriptblock]$LoadVerifier = $null,
-        [scriptblock]$SmokeVerifier = $null
+        [scriptblock]$SmokeVerifier = $null,
+        [switch]$OmitCredentialRefs
     )
 
     $tool = [ordered]@{
@@ -22,7 +23,9 @@ function New-TestVerificationTool {
         type = $Type
         source = $Source
         version = $Version
-        credential_refs = @($CredentialRefs)
+    }
+    if (-not $OmitCredentialRefs) {
+        $tool.credential_refs = @($CredentialRefs)
     }
     if ($PSBoundParameters.ContainsKey('CredentialMetadata')) {
         $tool.CredentialMetadata = $CredentialMetadata
@@ -112,6 +115,47 @@ Describe 'Layered tool verification' {
         $result.Status | Should Be 'blocked'
         $result.ErrorCode | Should Be 'credential_missing'
         $result.Level | Should Be 'load'
+    }
+
+    It 'continues load verification when credential_refs field is absent' {
+        $script:verifierCalled = $false
+        $tool = New-TestVerificationTool `
+            -OmitCredentialRefs `
+            -LoadVerifier {
+                $script:verifierCalled = $true
+                @{ Status = 'load_verified'; Message = 'loaded without credentials' }
+            }
+
+        $result = Invoke-LoadVerification -Tool $tool
+
+        $result.Status | Should Be 'load_verified'
+        $result.Message | Should Be 'loaded without credentials'
+        $script:verifierCalled | Should Be $true
+    }
+
+    It 'blocks load and smoke verification without calling verifiers when credential metadata is absent' {
+        $script:loadVerifierCalled = $false
+        $script:smokeVerifierCalled = $false
+        $tool = New-TestVerificationTool `
+            -CredentialRefs @('api-token') `
+            -LoadVerifier {
+                $script:loadVerifierCalled = $true
+                @{ Status = 'load_verified'; Message = 'loaded' }
+            } `
+            -SmokeVerifier {
+                $script:smokeVerifierCalled = $true
+                @{ Status = 'smoke_verified'; Message = 'smoked' }
+            }
+
+        $loadResult = Invoke-LoadVerification -Tool $tool
+        $smokeResult = Invoke-SmokeVerification -Tool $tool
+
+        $loadResult.Status | Should Be 'blocked'
+        $loadResult.ErrorCode | Should Be 'credential_missing'
+        $smokeResult.Status | Should Be 'blocked'
+        $smokeResult.ErrorCode | Should Be 'credential_missing'
+        $script:loadVerifierCalled | Should Be $false
+        $script:smokeVerifierCalled | Should Be $false
     }
 
     It 'returns blocked for load verification when static verification has not passed' {
@@ -220,6 +264,8 @@ Describe 'Layered tool verification' {
         ($content -match 'Level: static') | Should Be $true
         ($content -match 'Status: static_verified') | Should Be $true
         ($content -match 'Status: blocked') | Should Be $true
+        ($content -match 'Verification summary:') | Should Be $true
+        ($content -match '仅完成静态验证，不代表工具已完全可用') | Should Be $true
         ($content -match 'Residuals') | Should Be $true
         ($content -match 'Rollback') | Should Be $true
         ($content -match 'fully available') | Should Be $false

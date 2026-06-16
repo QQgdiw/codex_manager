@@ -390,16 +390,23 @@ function Invoke-SmokeVerification {
     $startedAt = [DateTime]::UtcNow
     $loadResult = Invoke-LoadVerification -Tool $Tool
     if ($loadResult.Status -ne 'load_verified') {
+        $errorCode = 'load_not_verified'
+        $message = 'Smoke verification requires successful load verification.'
+        if ($loadResult.ErrorCode -eq 'credential_missing') {
+            $errorCode = 'credential_missing'
+            $message = 'Required credential metadata is missing.'
+        }
+
         return New-VerificationResult `
             -Tool $Tool `
             -Level 'smoke' `
             -Status 'blocked' `
-            -Message 'Smoke verification requires successful load verification.' `
+            -Message $message `
             -StartedAt $startedAt `
             -Checks @($loadResult.Checks) `
             -Residuals @($loadResult.Residuals) `
             -SensitiveRedactions @($loadResult.SensitiveRedactions) `
-            -ErrorCode 'load_not_verified'
+            -ErrorCode $errorCode
     }
 
     $verifier = Get-VerificationMemberValue -Object $Tool -Names @('SmokeVerifier', 'smoke_verifier')
@@ -535,6 +542,11 @@ function Write-VerificationRecord {
     $redactions = @($SensitiveValues) + @($Result.SensitiveRedactions)
     $startedAt = ([DateTime]$Result.StartedAt).ToUniversalTime().ToString('o')
     $finishedAt = ([DateTime]$Result.FinishedAt).ToUniversalTime().ToString('o')
+    $verificationSummary = "level=$($Result.Level); status=$($Result.Status); checks=$(@($Result.Checks).Count); residuals=$(@($Result.Residuals).Count)"
+    $caveat = 'none'
+    if ($Result.Status -eq 'static_verified' -or $Result.Level -eq 'static') {
+        $caveat = '仅完成静态验证，不代表工具已完全可用'
+    }
     $lines = @(
         '## Verification Record',
         '',
@@ -549,6 +561,8 @@ function Write-VerificationRecord {
         (ConvertTo-VerificationMarkdownLine -Label 'StartedAt' -Value $startedAt -SensitiveValues $redactions),
         (ConvertTo-VerificationMarkdownLine -Label 'FinishedAt' -Value $finishedAt -SensitiveValues $redactions),
         (ConvertTo-VerificationMarkdownLine -Label 'Checks' -Value $Result.Checks -SensitiveValues $redactions),
+        (ConvertTo-VerificationMarkdownLine -Label 'Verification summary' -Value $verificationSummary -SensitiveValues $redactions),
+        (ConvertTo-VerificationMarkdownLine -Label 'Caveat' -Value $caveat -SensitiveValues $redactions),
         (ConvertTo-VerificationMarkdownLine -Label 'Rollback' -Value 'not_performed_by_verification_engine' -SensitiveValues $redactions),
         (ConvertTo-VerificationMarkdownLine -Label 'Residuals' -Value $Result.Residuals -SensitiveValues $redactions),
         (ConvertTo-VerificationMarkdownLine -Label 'BlockingReason' -Value $Result.ErrorCode -SensitiveValues $redactions),
