@@ -23,7 +23,7 @@ Describe 'Read-ProjectToml' {
         $document = Read-ProjectToml -Path (Join-Path $fixtures 'config.valid.toml')
 
         $document.name | Should Be 'basic'
-        $document.tool_ids[0] | Should Be 'skill.example'
+        $document.enabled_tools[0] | Should Be 'skill.example'
     }
 
     It 'rejects invalid TOML syntax' {
