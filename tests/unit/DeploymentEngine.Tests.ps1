@@ -68,6 +68,21 @@ function Sync-TestPlainPlanIntegrity {
     }
 }
 
+function Sync-TestProtectedPlanIntegrityIfExposed {
+    param([object]$Plan)
+
+    $protectCommand = Get-Command -Name Protect-DeploymentPlanIntegrity `
+        -ErrorAction SilentlyContinue
+    if ($null -ne $protectCommand -and
+        $null -ne (Get-Command -Name Get-DeploymentPlanIntegrity `
+            -ErrorAction SilentlyContinue)) {
+        $digest = Get-DeploymentPlanIntegrity -Plan $Plan
+        $Plan.PlanIntegrity = $digest
+        $Plan.ProtectedPlanIntegrity = Protect-DeploymentPlanIntegrity `
+            -Digest $digest
+    }
+}
+
 Describe 'Deployment plan construction and validation' {
     BeforeAll {
         . $deploymentLibrary
@@ -94,6 +109,12 @@ Describe 'Deployment plan construction and validation' {
         $plan.Items[0].Source | Should Be 'https://example.invalid/skill.a'
         $plan.Items[0].Version | Should Be 'v1.0.0'
         $plan.Items[0].Hash | Should Be ('a' * 64)
+        $plan.Items[0].ApprovedSnapshot.id | Should Be 'skill.a'
+        $plan.Items[0].ApprovedSnapshot.source |
+            Should Be 'https://example.invalid/skill.a'
+        $plan.Items[0].ApprovedSnapshot.sha256 | Should Be ('a' * 64)
+        $plan.Items[0].ApprovedSnapshot.credential_refs |
+            Should Be @('api-token')
         (Test-DeploymentPlan -Plan $plan).IsValid | Should Be $true
     }
 
@@ -303,6 +324,11 @@ Describe 'Deployment plan construction and validation' {
         { Test-DeploymentPlan -Plan ([pscustomobject]@{ Status = 'planned' }) } |
             Should Throw
     }
+
+    It 'does not expose a public plan integrity protection function' {
+        Get-Command -Name Protect-DeploymentPlanIntegrity `
+            -ErrorAction SilentlyContinue | Should Be $null
+    }
 }
 
 Describe 'Deployment plan invocation' {
@@ -496,6 +522,93 @@ Describe 'Deployment plan invocation' {
         @($script:orderTamperCalls).Count | Should Be 0
         $result[0].Status | Should Be 'blocked'
         $result[0].Message | Should Match 'order|topolog|dependency'
+    }
+
+    It 'blocks execution when executable fields are changed and protected integrity is recomputed' {
+        $script:protectedIntegrityBypassCalls = 0
+        $plan = New-DeploymentPlan `
+            -Config (New-TestConfig @('skill.a')) `
+            -Whitelist (New-TestWhitelist @((New-TestTool -Id 'skill.a'))) `
+            -CredentialMetadata @()
+        $plan.Items[0].Source = 'https://example.invalid/tampered'
+        $plan.Items[0].Hash = ('b' * 64)
+        Sync-TestProtectedPlanIntegrityIfExposed -Plan $plan
+
+        $result = @(Invoke-DeploymentPlan -Plan $plan -WhatIf:$false -Executor {
+            param($Item)
+            $script:protectedIntegrityBypassCalls++
+            New-OperationResult -Status 'succeeded' -Message 'unexpected' `
+                -Data ([pscustomobject]@{ ItemId = $Item.Id })
+        })
+
+        $script:protectedIntegrityBypassCalls | Should Be 0
+        $result[0].Status | Should Be 'blocked'
+        $result[0].Message | Should Match 'ApprovedSnapshot|snapshot|approved'
+    }
+
+    It 'blocks execution when safety fields differ from the approved snapshot' {
+        $tamperCases = @(
+            @{ Name = 'CredentialRefs'; Mutate = {
+                    param($Plan) $Plan.Items[0].CredentialRefs = @('other-token')
+                } },
+            @{ Name = 'Conflicts'; Mutate = {
+                    param($Plan) $Plan.Items[0].Conflicts = @('skill.other')
+                } },
+            @{ Name = 'Dependencies'; Mutate = {
+                    param($Plan) $Plan.Items[0].Dependencies = @('skill.other')
+                } },
+            @{ Name = 'Target'; Mutate = {
+                    param($Plan) $Plan.Items[0].Target = 'Skills/tampered'
+                } }
+        )
+
+        foreach ($case in $tamperCases) {
+            $script:snapshotMismatchCalls = 0
+            $tool = New-TestTool -Id 'skill.a' -CredentialRefs @('api-token')
+            $plan = New-DeploymentPlan `
+                -Config (New-TestConfig @('skill.a')) `
+                -Whitelist (New-TestWhitelist @($tool)) `
+                -CredentialMetadata @(
+                    [pscustomobject]@{ Name = 'api-token' },
+                    [pscustomobject]@{ Name = 'other-token' }
+                )
+            & $case.Mutate $plan
+            Sync-TestProtectedPlanIntegrityIfExposed -Plan $plan
+
+            $result = @(Invoke-DeploymentPlan -Plan $plan -WhatIf:$false `
+                -Executor {
+                    param($Item)
+                    $script:snapshotMismatchCalls++
+                    New-OperationResult -Status 'succeeded' `
+                        -Message 'unexpected' `
+                        -Data ([pscustomobject]@{ ItemId = $Item.Id })
+                })
+
+            $script:snapshotMismatchCalls | Should Be 0
+            $result[0].Status | Should Be 'blocked'
+            $result[0].Message | Should Match $case.Name
+        }
+    }
+
+    It 'blocks execution when the approved snapshot is tampered without recomputing integrity' {
+        $script:snapshotTamperCalls = 0
+        $plan = New-DeploymentPlan `
+            -Config (New-TestConfig @('skill.a')) `
+            -Whitelist (New-TestWhitelist @((New-TestTool -Id 'skill.a'))) `
+            -CredentialMetadata @()
+        $plan.Items[0].ApprovedSnapshot.source =
+            'https://example.invalid/tampered'
+
+        $result = @(Invoke-DeploymentPlan -Plan $plan -WhatIf:$false -Executor {
+            param($Item)
+            $script:snapshotTamperCalls++
+            New-OperationResult -Status 'succeeded' -Message 'unexpected' `
+                -Data ([pscustomobject]@{ ItemId = $Item.Id })
+        })
+
+        $script:snapshotTamperCalls | Should Be 0
+        $result[0].Status | Should Be 'blocked'
+        $result[0].Message | Should Match 'ProtectedPlanIntegrity|integrity'
     }
 
     It 'blocks dependents after failure and continues independent items' {

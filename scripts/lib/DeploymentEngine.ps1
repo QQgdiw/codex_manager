@@ -118,6 +118,57 @@ function Copy-DeploymentArraySnapshot {
     return ,($items.ToArray())
 }
 
+function New-DeploymentApprovedSnapshot {
+    param(
+        [string]$Id,
+        [object]$Tool,
+        [object[]]$CredentialRefs,
+        [object[]]$Conflicts,
+        [object[]]$Dependencies,
+        [object[]]$Permissions,
+        [object[]]$ExternalChanges,
+        [AllowNull()]
+        [object]$RollbackCapability
+    )
+
+    return [pscustomobject][ordered]@{
+        id = $Id
+        name = Copy-DeploymentValue -Value (
+            Get-DeploymentMember -InputObject $Tool -Name 'name'
+        ).Value
+        type = Copy-DeploymentValue -Value (
+            Get-DeploymentMember -InputObject $Tool -Name 'type'
+        ).Value
+        source = Copy-DeploymentValue -Value (
+            Get-DeploymentMember -InputObject $Tool -Name 'source'
+        ).Value
+        version = Copy-DeploymentValue -Value (
+            Get-DeploymentMember -InputObject $Tool -Name 'version'
+        ).Value
+        sha256 = Copy-DeploymentValue -Value (
+            Get-DeploymentMember -InputObject $Tool -Name 'sha256'
+        ).Value
+        license = Copy-DeploymentValue -Value (
+            Get-DeploymentMember -InputObject $Tool -Name 'license'
+        ).Value
+        approval = Copy-DeploymentValue -Value (
+            Get-DeploymentMember -InputObject $Tool -Name 'approval'
+        ).Value
+        risk = Copy-DeploymentValue -Value (
+            Get-DeploymentMember -InputObject $Tool -Name 'risk'
+        ).Value
+        install_target = Copy-DeploymentValue -Value (
+            Get-DeploymentMember -InputObject $Tool -Name 'install_target'
+        ).Value
+        credential_refs = Copy-DeploymentArraySnapshot -Value $CredentialRefs
+        conflicts = Copy-DeploymentArraySnapshot -Value $Conflicts
+        dependencies = Copy-DeploymentArraySnapshot -Value $Dependencies
+        permissions = Copy-DeploymentArraySnapshot -Value $Permissions
+        external_changes = Copy-DeploymentArraySnapshot -Value $ExternalChanges
+        rollback_capability = Copy-DeploymentValue -Value $RollbackCapability
+    }
+}
+
 function Add-DeploymentValidationError {
     param(
         [System.Collections.Generic.List[string]]$Errors,
@@ -241,6 +292,8 @@ function ConvertTo-DeploymentPlanIntegrityPayload {
                 Source = (Get-DeploymentMember -InputObject $_ -Name 'Source').Value
                 Version = (Get-DeploymentMember -InputObject $_ -Name 'Version').Value
                 Hash = (Get-DeploymentMember -InputObject $_ -Name 'Hash').Value
+                License = (Get-DeploymentMember -InputObject $_ -Name 'License').Value
+                Risk = (Get-DeploymentMember -InputObject $_ -Name 'Risk').Value
                 Target = (Get-DeploymentMember -InputObject $_ -Name 'Target').Value
                 Permissions = @((Get-DeploymentMember -InputObject $_ `
                         -Name 'Permissions').Value)
@@ -257,6 +310,9 @@ function ConvertTo-DeploymentPlanIntegrityPayload {
                 Approval = (Get-DeploymentMember -InputObject $_ `
                     -Name 'Approval').Value
                 Status = (Get-DeploymentMember -InputObject $_ -Name 'Status').Value
+                ApprovedSnapshot = Copy-DeploymentValue -Value (
+                    Get-DeploymentMember -InputObject $_ -Name 'ApprovedSnapshot'
+                ).Value
             }
         })
 
@@ -296,10 +352,8 @@ function Get-DeploymentPlanIntegrityEntropy {
     )
 }
 
-function Protect-DeploymentPlanIntegrity {
-    param(
-        [string]$Digest
-    )
+$script:ProtectDeploymentPlanIntegrity = {
+    param([string]$Digest)
 
     $plainBytes = [Text.Encoding]::UTF8.GetBytes($Digest)
     $protectedBytes = [Security.Cryptography.ProtectedData]::Protect(
@@ -310,11 +364,8 @@ function Protect-DeploymentPlanIntegrity {
     return [Convert]::ToBase64String($protectedBytes)
 }
 
-function Unprotect-DeploymentPlanIntegrity {
-    param(
-        [AllowNull()]
-        [object]$ProtectedDigest
-    )
+$script:UnprotectDeploymentPlanIntegrity = {
+    param([AllowNull()][object]$ProtectedDigest)
 
     if ($ProtectedDigest -isnot [string] -or
         [string]::IsNullOrWhiteSpace($ProtectedDigest)) {
@@ -379,6 +430,41 @@ function Get-DeploymentPlanStringArray {
         $values += $value
     }
     return $values
+}
+
+function Test-DeploymentStringArrayEqual {
+    param(
+        [AllowNull()]
+        [object]$Left,
+        [AllowNull()]
+        [object]$Right
+    )
+
+    if ($Left -isnot [System.Array] -or $Right -isnot [System.Array]) {
+        return $false
+    }
+    if ($Left.Count -ne $Right.Count) {
+        return $false
+    }
+    for ($index = 0; $index -lt $Left.Count; $index++) {
+        if ($Left[$index] -cne $Right[$index]) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Add-DeploymentSnapshotMismatch {
+    param(
+        [System.Collections.Generic.List[string]]$Errors,
+        [string]$ItemId,
+        [string]$Field
+    )
+
+    Add-DeploymentValidationError -Errors $Errors -Message (
+        "Deployment plan item '$ItemId' field '$Field' does not match " +
+        'the ApprovedSnapshot.'
+    )
 }
 
 function New-DeploymentPlan {
@@ -537,11 +623,21 @@ function New-DeploymentPlan {
         $target = Get-DeploymentMember -InputObject $tool -Name 'install_target'
         $type = Get-DeploymentMember -InputObject $tool -Name 'type'
         $name = Get-DeploymentMember -InputObject $tool -Name 'name'
+        $license = Get-DeploymentMember -InputObject $tool -Name 'license'
+        $risk = Get-DeploymentMember -InputObject $tool -Name 'risk'
         $permissionsCopy = Copy-DeploymentArraySnapshot -Value $permissions
         $credentialRefsCopy = Copy-DeploymentArraySnapshot -Value $credentialRefs
         $conflictsCopy = Copy-DeploymentArraySnapshot -Value $conflicts
         $dependenciesCopy = Copy-DeploymentArraySnapshot -Value $dependencies
         $externalChangesCopy = Copy-DeploymentArraySnapshot -Value $externalChanges
+        $approvedSnapshot = New-DeploymentApprovedSnapshot -Id $id `
+            -Tool $tool `
+            -CredentialRefs $credentialRefs `
+            -Conflicts $conflicts `
+            -Dependencies $dependencies `
+            -Permissions $permissions `
+            -ExternalChanges $externalChanges `
+            -RollbackCapability $rollbackCapability
         $item = [pscustomobject][ordered]@{
             Id = $id
             Name = Copy-DeploymentValue -Value $name.Value
@@ -549,6 +645,8 @@ function New-DeploymentPlan {
             Source = Copy-DeploymentValue -Value $source.Value
             Version = Copy-DeploymentValue -Value $version.Value
             Hash = Copy-DeploymentValue -Value $hash.Value
+            License = Copy-DeploymentValue -Value $license.Value
+            Risk = Copy-DeploymentValue -Value $risk.Value
             Target = Copy-DeploymentValue -Value $target.Value
             Permissions = $permissionsCopy
             CredentialRefs = $credentialRefsCopy
@@ -559,6 +657,7 @@ function New-DeploymentPlan {
                 -Value $rollbackCapability
             Approval = Copy-DeploymentValue -Value $approval.Value
             Status = 'planned'
+            ApprovedSnapshot = $approvedSnapshot
         }
         $itemsById[$id] = $item
         $configuredItems.Add($item)
@@ -643,7 +742,7 @@ function New-DeploymentPlan {
         ProtectedPlanIntegrity = $null
     }
     $plan.PlanIntegrity = Get-DeploymentPlanIntegrity -Plan $plan
-    $plan.ProtectedPlanIntegrity = Protect-DeploymentPlanIntegrity `
+    $plan.ProtectedPlanIntegrity = & $script:ProtectDeploymentPlanIntegrity `
         -Digest $plan.PlanIntegrity
     return $plan
 }
@@ -727,7 +826,8 @@ function Test-DeploymentPlan {
         foreach ($required in @(
                 'Id', 'Type', 'Source', 'Version', 'Hash', 'Target',
                 'Permissions', 'CredentialRefs', 'Conflicts', 'Dependencies',
-                'ExternalChanges', 'RollbackCapability', 'Approval', 'Status'
+                'ExternalChanges', 'RollbackCapability', 'Approval', 'Status',
+                'License', 'Risk', 'ApprovedSnapshot'
             )) {
             if (-not (Get-DeploymentMember -InputObject $item `
                     -Name $required).Exists) {
@@ -757,7 +857,8 @@ function Test-DeploymentPlan {
         }
 
         foreach ($field in @(
-                'Source', 'Version', 'Target', 'RollbackCapability'
+                'Source', 'Version', 'Target', 'RollbackCapability',
+                'License', 'Risk'
             )) {
             Add-DeploymentPlanStringError -Errors $errors -ItemId $labelId `
                 -Field $field `
@@ -797,12 +898,14 @@ function Test-DeploymentPlan {
                 -Message "Deployment plan item '$labelId' Status must be planned."
         }
 
+        $itemArrayValues = @{}
         foreach ($arrayField in @(
                 'Permissions', 'CredentialRefs', 'Conflicts', 'Dependencies',
                 'ExternalChanges'
             )) {
             $values = @(Get-DeploymentPlanStringArray -Errors $errors `
                     -Item $item -ItemId $labelId -Field $arrayField)
+            $itemArrayValues[$arrayField] = $values
             if ($arrayField -eq 'Dependencies') {
                 $dependencyMap[$labelId] = $values
             }
@@ -818,6 +921,75 @@ function Test-DeploymentPlan {
                                 "requires missing credential '$credentialRef'."
                             )
                     }
+                }
+            }
+        }
+
+        $approvedSnapshot = (Get-DeploymentMember -InputObject $item `
+                -Name 'ApprovedSnapshot').Value
+        if (-not (Test-DeploymentObject -Value $approvedSnapshot)) {
+            Add-DeploymentValidationError -Errors $errors `
+                -Message "Deployment plan item '$labelId' ApprovedSnapshot must be an object."
+        }
+        else {
+            foreach ($requiredSnapshot in @(
+                    'id', 'name', 'type', 'source', 'version', 'sha256',
+                    'license', 'approval', 'risk', 'install_target',
+                    'credential_refs', 'conflicts', 'dependencies',
+                    'permissions', 'external_changes', 'rollback_capability'
+                )) {
+                if (-not (Get-DeploymentMember -InputObject $approvedSnapshot `
+                        -Name $requiredSnapshot).Exists) {
+                    Add-DeploymentValidationError -Errors $errors -Message (
+                        "Deployment plan item '$labelId' ApprovedSnapshot " +
+                        "is missing field '$requiredSnapshot'."
+                    )
+                }
+            }
+
+            $snapshotStringMap = [ordered]@{
+                Id = 'id'
+                Name = 'name'
+                Type = 'type'
+                Source = 'source'
+                Version = 'version'
+                Hash = 'sha256'
+                License = 'license'
+                Approval = 'approval'
+                Risk = 'risk'
+                Target = 'install_target'
+                RollbackCapability = 'rollback_capability'
+            }
+            foreach ($itemField in $snapshotStringMap.Keys) {
+                $snapshotField = $snapshotStringMap[$itemField]
+                $itemValue = (Get-DeploymentMember -InputObject $item `
+                        -Name $itemField).Value
+                $snapshotValue = (Get-DeploymentMember `
+                        -InputObject $approvedSnapshot `
+                        -Name $snapshotField).Value
+                if ($itemValue -cne $snapshotValue) {
+                    Add-DeploymentSnapshotMismatch -Errors $errors `
+                        -ItemId $labelId -Field $itemField
+                }
+            }
+
+            $snapshotArrayMap = @{
+                Permissions = 'permissions'
+                CredentialRefs = 'credential_refs'
+                Conflicts = 'conflicts'
+                Dependencies = 'dependencies'
+                ExternalChanges = 'external_changes'
+            }
+            foreach ($itemField in $snapshotArrayMap.Keys) {
+                $snapshotField = $snapshotArrayMap[$itemField]
+                $snapshotValue = (Get-DeploymentMember `
+                        -InputObject $approvedSnapshot `
+                        -Name $snapshotField).Value
+                if (-not (Test-DeploymentStringArrayEqual `
+                        -Left $itemArrayValues[$itemField] `
+                        -Right $snapshotValue)) {
+                    Add-DeploymentSnapshotMismatch -Errors $errors `
+                        -ItemId $labelId -Field $itemField
                 }
             }
         }
@@ -887,7 +1059,7 @@ function Test-DeploymentPlan {
 
     $protectedIntegrity = (Get-DeploymentMember -InputObject $Plan `
             -Name 'ProtectedPlanIntegrity').Value
-    $unprotectedIntegrity = Unprotect-DeploymentPlanIntegrity `
+    $unprotectedIntegrity = & $script:UnprotectDeploymentPlanIntegrity `
         -ProtectedDigest $protectedIntegrity
     if ($unprotectedIntegrity -isnot [string] -or
         $unprotectedIntegrity -cnotmatch '^[0-9a-f]{64}$') {
