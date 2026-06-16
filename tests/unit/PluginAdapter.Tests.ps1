@@ -273,6 +273,48 @@ Describe 'Install-ManagedPlugin' {
         $result.Status | Should Be 'failed'
         $result.Message | Should Match '\[REDACTED\]'
         $result.Message | Should Not Match 'SECRET-TOKEN'
+        $json = $result.Data | ConvertTo-Json -Depth 8 -Compress
+        $result.Data.PSObject.Properties.Name | Should Not Contain 'Result'
+        $json | Should Not Match 'SECRET-TOKEN'
+    }
+
+    It 'stores only redacted executor summaries in result data' {
+        $plan = Get-PluginInstallPlan -Tool (New-TestPluginTool)
+
+        $result = Install-ManagedPlugin -Plan $plan -Executor {
+            param($Command)
+            New-SuccessProcessResult `
+                -StdOut 'installed SECRET-TOKEN auth.json {"token":"RAW-AUTH-TOKEN"}'
+        }
+
+        $json = $result.Data | ConvertTo-Json -Depth 8 -Compress
+        $result.Status | Should Be 'succeeded'
+        $result.Data.PSObject.Properties.Name | Should Not Contain 'MarketplaceResult'
+        $result.Data.PSObject.Properties.Name | Should Not Contain 'PluginResult'
+        $json | Should Match 'Steps'
+        $json | Should Not Match 'SECRET-TOKEN'
+        $json | Should Not Match 'RAW-AUTH-TOKEN'
+        $json | Should Not Match 'auth\.json'
+    }
+
+    It 'returns a redacted failed result when the executor throws' {
+        $plan = Get-PluginInstallPlan -Tool (New-TestPluginTool)
+
+        $result = Install-ManagedPlugin -Plan $plan -Executor {
+            param($Command)
+            throw 'executor failed SECRET-TOKEN auth.json token=RAW-AUTH-TOKEN'
+        }
+
+        $json = $result.Data | ConvertTo-Json -Depth 8 -Compress
+        $result.Status | Should Be 'failed'
+        $result.Message | Should Match 'executor'
+        $result.Message | Should Match '\[REDACTED\]'
+        $result.Message | Should Not Match 'SECRET-TOKEN'
+        $result.Message | Should Not Match 'RAW-AUTH-TOKEN'
+        $json | Should Not Match 'SECRET-TOKEN'
+        $json | Should Not Match 'RAW-AUTH-TOKEN'
+        $json | Should Not Match 'auth\.json'
+        $result.Data.FailedStep | Should Be 'marketplace_add'
     }
 }
 
@@ -343,5 +385,42 @@ Describe 'Test-ManagedPlugin' {
 
         $result.Status | Should Be 'failed'
         $result.Message | Should Match 'not found'
+    }
+
+    It 'reports malformed JSON separately from a missing selector' {
+        $plan = Get-PluginInstallPlan -Tool (New-TestPluginTool)
+
+        $result = Test-ManagedPlugin -Plan $plan -Executor {
+            param($Command)
+            New-SuccessProcessResult -StdOut '{ "plugin": "openai-browser", '
+        }
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'plugin_list_parse_failed'
+        $result.Message | Should Match 'parse|JSON'
+        $result.Message | Should Not Match 'not found'
+    }
+
+    It 'finds selector in plain text only on exact token boundaries' {
+        $plan = Get-PluginInstallPlan -Tool (New-TestPluginTool)
+
+        $result = Test-ManagedPlugin -Plan $plan -Executor {
+            param($Command)
+            New-SuccessProcessResult -StdOut "installed plugins:`nopenai-browser@openai-primary`n"
+        }
+
+        $result.Status | Should Be 'load_verified'
+    }
+
+    It 'does not match selector as a substring of another plain text token' {
+        $plan = Get-PluginInstallPlan -Tool (New-TestPluginTool)
+
+        $result = Test-ManagedPlugin -Plan $plan -Executor {
+            param($Command)
+            New-SuccessProcessResult -StdOut 'selector-old=openai-browser@openai-primary-old'
+        }
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'plugin_not_found'
     }
 }

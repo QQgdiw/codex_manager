@@ -286,9 +286,79 @@ function Protect-PluginAdapterText {
 
     $value = if ($null -eq $Text) { '' } else { "$Text" }
     if (Get-Command Protect-LogText -ErrorAction SilentlyContinue) {
-        return Protect-LogText -Text $value -SensitiveValues $SensitiveValues
+        $value = Protect-LogText -Text $value -SensitiveValues $SensitiveValues
     }
+
+    $value = $value -replace '(?i)auth\.json', '[REDACTED]'
+    $value = [regex]::Replace(
+        $value,
+        '(?i)((?:"?(?:token|access_token|refresh_token|auth_token|api_key|secret|password)"?)\s*[:=]\s*)("[^"]*"|[^\s,;}\]]+)',
+        '$1[REDACTED]'
+    )
+    $value = [regex]::Replace(
+        $value,
+        '(?i)(Bearer\s+)[A-Za-z0-9._~+/\-]+=*',
+        '$1[REDACTED]'
+    )
     return $value
+}
+
+function New-PluginAdapterTextSummary {
+    param(
+        [AllowNull()]
+        [object]$Text,
+
+        [AllowNull()]
+        [string[]]$SensitiveValues = @()
+    )
+
+    $raw = if ($null -eq $Text) { '' } else { "$Text" }
+    $safe = Protect-PluginAdapterText -Text $raw -SensitiveValues $SensitiveValues
+    $maxLength = 240
+    $preview = $safe
+    $truncated = $false
+    if ($preview.Length -gt $maxLength) {
+        $preview = $preview.Substring(0, $maxLength)
+        $truncated = $true
+    }
+
+    return [pscustomobject][ordered]@{
+        Length = $raw.Length
+        Preview = $preview
+        Truncated = $truncated
+    }
+}
+
+function New-PluginProcessSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Step,
+
+        [AllowNull()]
+        [object]$Result,
+
+        [AllowNull()]
+        [string[]]$SensitiveValues = @()
+    )
+
+    $succeeded = Get-PluginAdapterMember -InputObject $Result -Names @('Succeeded')
+    $exitCode = Get-PluginAdapterMember -InputObject $Result -Names @('ExitCode')
+    $timedOut = Get-PluginAdapterMember -InputObject $Result -Names @('TimedOut')
+    $stderr = Get-PluginAdapterMember -InputObject $Result -Names @('StdErr', 'stderr')
+    $stdout = Get-PluginAdapterMember -InputObject $Result -Names @('StdOut', 'stdout')
+    $exceptionType = Get-PluginAdapterMember -InputObject $Result -Names @('ExceptionType')
+
+    return [pscustomobject][ordered]@{
+        Step = $Step
+        Succeeded = if ($null -eq $succeeded) { $false } else { [bool]$succeeded }
+        ExitCode = $exitCode
+        TimedOut = if ($null -eq $timedOut) { $false } else { [bool]$timedOut }
+        StdOut = New-PluginAdapterTextSummary -Text $stdout `
+            -SensitiveValues $SensitiveValues
+        StdErr = New-PluginAdapterTextSummary -Text $stderr `
+            -SensitiveValues $SensitiveValues
+        ExceptionType = if ($null -eq $exceptionType) { $null } else { "$exceptionType" }
+    }
 }
 
 function Test-PluginProcessSucceeded {
@@ -331,10 +401,28 @@ function Invoke-PluginAdapterExecutor {
         [object]$Command,
 
         [Parameter(Mandatory = $true)]
-        [scriptblock]$Executor
+        [scriptblock]$Executor,
+
+        [AllowNull()]
+        [string[]]$SensitiveValues = @()
     )
 
-    $result = @(& $Executor $Command)
+    try {
+        $result = @(& $Executor $Command)
+    }
+    catch {
+        $message = Protect-PluginAdapterText -Text $_.Exception.Message `
+            -SensitiveValues $SensitiveValues
+        return [pscustomobject][ordered]@{
+            Succeeded = $false
+            ExitCode = $null
+            TimedOut = $false
+            StdOut = ''
+            StdErr = "Plugin adapter executor failed: $message"
+            ExceptionType = $_.Exception.GetType().FullName
+        }
+    }
+
     if ($result.Count -eq 0) {
         return $null
     }
@@ -432,7 +520,8 @@ function Install-ManagedPlugin {
 
     $marketplaceResult = Invoke-PluginAdapterExecutor `
         -Command $Plan.MarketplaceCommand `
-        -Executor $Executor
+        -Executor $Executor `
+        -SensitiveValues $Plan.SensitiveRedactions
     if (-not (Test-PluginProcessSucceeded -Result $marketplaceResult)) {
         return New-OperationResult -Status 'failed' `
             -Message (
@@ -444,13 +533,17 @@ function Install-ManagedPlugin {
                 QualifiedSelector = $Plan.QualifiedSelector
                 FailedStep = 'marketplace_add'
                 Command = $Plan.MarketplaceCommand
-                Result = $marketplaceResult
+                ResultSummary = New-PluginProcessSummary `
+                    -Step 'marketplace_add' `
+                    -Result $marketplaceResult `
+                    -SensitiveValues $Plan.SensitiveRedactions
             })
     }
 
     $pluginResult = Invoke-PluginAdapterExecutor `
         -Command $Plan.PluginCommand `
-        -Executor $Executor
+        -Executor $Executor `
+        -SensitiveValues $Plan.SensitiveRedactions
     if (-not (Test-PluginProcessSucceeded -Result $pluginResult)) {
         return New-OperationResult -Status 'failed' `
             -Message (
@@ -462,7 +555,10 @@ function Install-ManagedPlugin {
                 QualifiedSelector = $Plan.QualifiedSelector
                 FailedStep = 'plugin_add'
                 Command = $Plan.PluginCommand
-                Result = $pluginResult
+                ResultSummary = New-PluginProcessSummary `
+                    -Step 'plugin_add' `
+                    -Result $pluginResult `
+                    -SensitiveValues $Plan.SensitiveRedactions
             })
     }
 
@@ -470,8 +566,14 @@ function Install-ManagedPlugin {
         -Message "Codex plugin '$($Plan.QualifiedSelector)' install commands completed." `
         -Data ([pscustomobject][ordered]@{
             QualifiedSelector = $Plan.QualifiedSelector
-            MarketplaceResult = $marketplaceResult
-            PluginResult = $pluginResult
+            Steps = @(
+                New-PluginProcessSummary -Step 'marketplace_add' `
+                    -Result $marketplaceResult `
+                    -SensitiveValues $Plan.SensitiveRedactions
+                New-PluginProcessSummary -Step 'plugin_add' `
+                    -Result $pluginResult `
+                    -SensitiveValues $Plan.SensitiveRedactions
+            )
         })
 }
 
@@ -503,7 +605,8 @@ function Uninstall-ManagedPlugin {
 
     $removeResult = Invoke-PluginAdapterExecutor `
         -Command $Plan.RemoveCommand `
-        -Executor $Executor
+        -Executor $Executor `
+        -SensitiveValues $Plan.SensitiveRedactions
     if (-not (Test-PluginProcessSucceeded -Result $removeResult)) {
         return New-OperationResult -Status 'failed' `
             -Message (
@@ -514,7 +617,10 @@ function Uninstall-ManagedPlugin {
             -Data ([pscustomobject][ordered]@{
                 QualifiedSelector = $Plan.QualifiedSelector
                 Command = $Plan.RemoveCommand
-                Result = $removeResult
+                ResultSummary = New-PluginProcessSummary `
+                    -Step 'plugin_remove' `
+                    -Result $removeResult `
+                    -SensitiveValues $Plan.SensitiveRedactions
             })
     }
 
@@ -522,8 +628,31 @@ function Uninstall-ManagedPlugin {
         -Message "Codex plugin '$($Plan.QualifiedSelector)' remove command completed." `
         -Data ([pscustomobject][ordered]@{
             QualifiedSelector = $Plan.QualifiedSelector
-            Result = $removeResult
+            Steps = @(
+                New-PluginProcessSummary -Step 'plugin_remove' `
+                    -Result $removeResult `
+                    -SensitiveValues $Plan.SensitiveRedactions
+            )
         })
+}
+
+function New-PluginListSelectorResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$Found,
+
+        [AllowNull()]
+        [string]$ErrorCode = $null,
+
+        [AllowNull()]
+        [string]$Message = $null
+    )
+
+    return [pscustomobject][ordered]@{
+        Found = $Found
+        ErrorCode = $ErrorCode
+        Message = $Message
+    }
 }
 
 function Test-PluginListContainsSelector {
@@ -539,29 +668,45 @@ function Test-PluginListContainsSelector {
     )
 
     $qualified = "$PluginSelector@$MarketplaceName"
-    if ($Output -match [regex]::Escape($qualified)) {
-        return $true
-    }
+    $trimmed = $Output.Trim()
 
-    try {
-        $items = @($Output | ConvertFrom-Json -ErrorAction Stop)
-        foreach ($item in $items) {
-            $selector = Get-PluginAdapterString -InputObject $item `
-                -Names @('plugin', 'plugin_id', 'plugin_selector', 'name', 'id')
-            $marketplace = Get-PluginAdapterString -InputObject $item `
-                -Names @('marketplace', 'marketplace_name')
-            if ($selector -eq $PluginSelector -and $marketplace -eq $MarketplaceName) {
-                return $true
-            }
-            if ("$selector" -eq $qualified) {
-                return $true
+    if ($trimmed.StartsWith('{') -or $trimmed.StartsWith('[')) {
+        try {
+            $items = @($Output | ConvertFrom-Json -ErrorAction Stop)
+            foreach ($item in $items) {
+                $selector = Get-PluginAdapterString -InputObject $item `
+                    -Names @('plugin', 'plugin_id', 'plugin_selector', 'name', 'id')
+                $marketplace = Get-PluginAdapterString -InputObject $item `
+                    -Names @('marketplace', 'marketplace_name')
+                if ($selector -eq $PluginSelector -and $marketplace -eq $MarketplaceName) {
+                    return New-PluginListSelectorResult -Found $true
+                }
+                if ("$selector" -eq $qualified) {
+                    return New-PluginListSelectorResult -Found $true
+                }
             }
         }
-    }
-    catch {
+        catch {
+            return New-PluginListSelectorResult -Found $false `
+                -ErrorCode 'plugin_list_parse_failed' `
+                -Message 'Codex plugin list JSON output could not be parsed.'
+        }
+
+        return New-PluginListSelectorResult -Found $false `
+            -ErrorCode 'plugin_not_found'
     }
 
-    return $false
+    $tokenPattern = (
+        '(?<![A-Za-z0-9._@-])' +
+        [regex]::Escape($qualified) +
+        '(?![A-Za-z0-9._@-])'
+    )
+    if ($Output -match $tokenPattern) {
+        return New-PluginListSelectorResult -Found $true
+    }
+
+    return New-PluginListSelectorResult -Found $false `
+        -ErrorCode 'plugin_not_found'
 }
 
 function New-PluginVerificationResult {
@@ -639,7 +784,9 @@ function Test-ManagedPlugin {
 
     $listCommand = New-PluginAdapterCommand -FilePath 'codex' `
         -Arguments @('plugin', 'list', '--json')
-    $listResult = Invoke-PluginAdapterExecutor -Command $listCommand -Executor $Executor
+    $listResult = Invoke-PluginAdapterExecutor -Command $listCommand `
+        -Executor $Executor `
+        -SensitiveValues $Plan.SensitiveRedactions
     if (-not (Test-PluginProcessSucceeded -Result $listResult)) {
         return New-PluginVerificationResult -Plan $Plan `
             -Status 'failed' `
@@ -653,10 +800,17 @@ function Test-ManagedPlugin {
     }
 
     $stdout = Get-PluginAdapterMember -InputObject $listResult -Names @('StdOut', 'stdout')
-    $found = Test-PluginListContainsSelector -Output "$stdout" `
+    $match = Test-PluginListContainsSelector -Output "$stdout" `
         -PluginSelector $Plan.PluginSelector `
         -MarketplaceName $Plan.MarketplaceName
-    if (-not $found) {
+    if ($match.ErrorCode -eq 'plugin_list_parse_failed') {
+        return New-PluginVerificationResult -Plan $Plan `
+            -Status 'failed' `
+            -Message $match.Message `
+            -Checks @('codex plugin list --json') `
+            -ErrorCode 'plugin_list_parse_failed'
+    }
+    if (-not $match.Found) {
         return New-PluginVerificationResult -Plan $Plan `
             -Status 'failed' `
             -Message "Codex plugin '$($Plan.QualifiedSelector)' was not found in plugin list output." `
