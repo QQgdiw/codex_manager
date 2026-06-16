@@ -78,7 +78,7 @@ function Copy-DeploymentValue {
         $copy = @($Value | ForEach-Object {
             Copy-DeploymentValue -Value $_
         })
-        return ,$copy
+        return $copy
     }
 
     if ($Value -is [System.Management.Automation.PSCustomObject]) {
@@ -90,6 +90,28 @@ function Copy-DeploymentValue {
     }
 
     return $Value
+}
+
+function Copy-DeploymentArraySnapshot {
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    $items = New-Object System.Collections.Generic.List[object]
+    if ($null -ne $Value) {
+        $sourceItems = if ($Value -is [System.Array] -or
+            ($Value -is [System.Collections.IList] -and $Value -isnot [string])) {
+            @($Value)
+        }
+        else {
+            @($Value)
+        }
+        foreach ($item in $sourceItems) {
+            $items.Add((Copy-DeploymentValue -Value $item))
+        }
+    }
+    return ,($items.ToArray())
 }
 
 function Add-DeploymentValidationError {
@@ -199,6 +221,113 @@ function Protect-DeploymentExceptionText {
         '[REDACTED]'
     )
     return $protected
+}
+
+function ConvertTo-DeploymentPlanIntegrityPayload {
+    param(
+        [object]$Plan
+    )
+
+    $items = @((Get-DeploymentMember -InputObject $Plan -Name 'Items').Value |
+        ForEach-Object {
+            [pscustomobject][ordered]@{
+                Id = (Get-DeploymentMember -InputObject $_ -Name 'Id').Value
+                Name = (Get-DeploymentMember -InputObject $_ -Name 'Name').Value
+                Type = (Get-DeploymentMember -InputObject $_ -Name 'Type').Value
+                Source = (Get-DeploymentMember -InputObject $_ -Name 'Source').Value
+                Version = (Get-DeploymentMember -InputObject $_ -Name 'Version').Value
+                Hash = (Get-DeploymentMember -InputObject $_ -Name 'Hash').Value
+                Target = (Get-DeploymentMember -InputObject $_ -Name 'Target').Value
+                Permissions = @((Get-DeploymentMember -InputObject $_ `
+                        -Name 'Permissions').Value)
+                CredentialRefs = @((Get-DeploymentMember -InputObject $_ `
+                        -Name 'CredentialRefs').Value)
+                Conflicts = @((Get-DeploymentMember -InputObject $_ `
+                        -Name 'Conflicts').Value)
+                Dependencies = @((Get-DeploymentMember -InputObject $_ `
+                        -Name 'Dependencies').Value)
+                ExternalChanges = @((Get-DeploymentMember -InputObject $_ `
+                        -Name 'ExternalChanges').Value)
+                RollbackCapability = (Get-DeploymentMember -InputObject $_ `
+                    -Name 'RollbackCapability').Value
+                Approval = (Get-DeploymentMember -InputObject $_ `
+                    -Name 'Approval').Value
+                Status = (Get-DeploymentMember -InputObject $_ -Name 'Status').Value
+            }
+        })
+
+    return [pscustomobject][ordered]@{
+        SchemaVersion = (Get-DeploymentMember -InputObject $Plan `
+            -Name 'SchemaVersion').Value
+        Status = (Get-DeploymentMember -InputObject $Plan -Name 'Status').Value
+        Items = $items
+        Errors = @((Get-DeploymentMember -InputObject $Plan -Name 'Errors').Value)
+        Warnings = @((Get-DeploymentMember -InputObject $Plan -Name 'Warnings').Value)
+    }
+}
+
+function Get-DeploymentPlanIntegrity {
+    param(
+        [object]$Plan
+    )
+
+    $payload = ConvertTo-DeploymentPlanIntegrityPayload -Plan $Plan
+    $json = $payload | ConvertTo-Json -Depth 20 -Compress
+    $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha256.ComputeHash($bytes)
+    }
+    finally {
+        $sha256.Dispose()
+    }
+    return (($hash | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+
+function Add-DeploymentPlanStringError {
+    param(
+        [System.Collections.Generic.List[string]]$Errors,
+        [string]$ItemId,
+        [string]$Field,
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($Value -isnot [string] -or [string]::IsNullOrWhiteSpace($Value)) {
+        Add-DeploymentValidationError -Errors $Errors `
+            -Message "Deployment plan item '$ItemId' field '$Field' must be a non-empty string."
+    }
+}
+
+function Get-DeploymentPlanStringArray {
+    param(
+        [System.Collections.Generic.List[string]]$Errors,
+        [object]$Item,
+        [string]$ItemId,
+        [string]$Field
+    )
+
+    $member = Get-DeploymentMember -InputObject $Item -Name $Field
+    if ($member.Value -isnot [System.Array]) {
+        Add-DeploymentValidationError -Errors $Errors `
+            -Message "Deployment plan item '$ItemId' field '$Field' must be an array."
+        return @()
+    }
+
+    $values = @()
+    for ($index = 0; $index -lt $member.Value.Count; $index++) {
+        $value = $member.Value[$index]
+        if ($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value)) {
+            Add-DeploymentValidationError -Errors $Errors `
+                -Message (
+                    "Deployment plan item '$ItemId' field '$Field[$index]' " +
+                    'must be a non-empty string.'
+                )
+            continue
+        }
+        $values += $value
+    }
+    return $values
 }
 
 function New-DeploymentPlan {
@@ -353,6 +482,11 @@ function New-DeploymentPlan {
         $target = Get-DeploymentMember -InputObject $tool -Name 'install_target'
         $type = Get-DeploymentMember -InputObject $tool -Name 'type'
         $name = Get-DeploymentMember -InputObject $tool -Name 'name'
+        $permissionsCopy = Copy-DeploymentArraySnapshot -Value $permissions
+        $credentialRefsCopy = Copy-DeploymentArraySnapshot -Value $credentialRefs
+        $conflictsCopy = Copy-DeploymentArraySnapshot -Value $conflicts
+        $dependenciesCopy = Copy-DeploymentArraySnapshot -Value $dependencies
+        $externalChangesCopy = Copy-DeploymentArraySnapshot -Value $externalChanges
         $item = [pscustomobject][ordered]@{
             Id = $id
             Name = Copy-DeploymentValue -Value $name.Value
@@ -361,11 +495,11 @@ function New-DeploymentPlan {
             Version = Copy-DeploymentValue -Value $version.Value
             Hash = Copy-DeploymentValue -Value $hash.Value
             Target = Copy-DeploymentValue -Value $target.Value
-            Permissions = Copy-DeploymentValue -Value $permissions
-            CredentialRefs = Copy-DeploymentValue -Value $credentialRefs
-            Conflicts = Copy-DeploymentValue -Value $conflicts
-            Dependencies = Copy-DeploymentValue -Value $dependencies
-            ExternalChanges = Copy-DeploymentValue -Value $externalChanges
+            Permissions = $permissionsCopy
+            CredentialRefs = $credentialRefsCopy
+            Conflicts = $conflictsCopy
+            Dependencies = $dependenciesCopy
+            ExternalChanges = $externalChangesCopy
             RollbackCapability = Copy-DeploymentValue `
                 -Value $rollbackCapability
             Approval = Copy-DeploymentValue -Value $approval.Value
@@ -443,13 +577,16 @@ function New-DeploymentPlan {
         }
     }
 
-    return [pscustomobject][ordered]@{
+    $plan = [pscustomobject][ordered]@{
         SchemaVersion = '1.0'
         Status = 'planned'
         Items = $orderedItems.ToArray()
         Errors = $errors.ToArray()
         Warnings = $warnings.ToArray()
+        PlanIntegrity = $null
     }
+    $plan.PlanIntegrity = Get-DeploymentPlanIntegrity -Plan $plan
+    return $plan
 }
 
 function Test-DeploymentPlan {
@@ -464,7 +601,10 @@ function Test-DeploymentPlan {
         throw 'Deployment plan must be a readable object.'
     }
 
-    foreach ($required in @('SchemaVersion', 'Status', 'Items', 'Errors', 'Warnings')) {
+    foreach ($required in @(
+            'SchemaVersion', 'Status', 'Items', 'Errors', 'Warnings',
+            'PlanIntegrity'
+        )) {
         $member = Get-DeploymentMember -InputObject $Plan -Name $required
         if (-not $member.Exists) {
             throw "Deployment plan is missing required field '$required'."
@@ -485,6 +625,21 @@ function Test-DeploymentPlan {
         Add-DeploymentValidationError -Errors $errors -Message "$errorText"
     }
 
+    $schemaVersion = (Get-DeploymentMember -InputObject $Plan `
+            -Name 'SchemaVersion').Value
+    if ($schemaVersion -cne '1.0') {
+        Add-DeploymentValidationError -Errors $errors `
+            -Message 'Deployment plan SchemaVersion is invalid.'
+    }
+    $status = (Get-DeploymentMember -InputObject $Plan -Name 'Status').Value
+    if ($status -cne 'planned') {
+        Add-DeploymentValidationError -Errors $errors `
+            -Message 'Deployment plan Status must be planned.'
+    }
+
+    $itemIds = @{}
+    $dependencyMap = @{}
+    $conflictMap = @{}
     foreach ($item in $items) {
         if (-not (Test-DeploymentObject -Value $item)) {
             throw 'Deployment plan contains a damaged item.'
@@ -500,12 +655,142 @@ function Test-DeploymentPlan {
             }
         }
 
+        $id = (Get-DeploymentMember -InputObject $item -Name 'Id').Value
+        $labelId = if ($id -is [string] -and
+            -not [string]::IsNullOrWhiteSpace($id)) {
+            $id
+        }
+        else {
+            '<invalid>'
+        }
+        Add-DeploymentPlanStringError -Errors $errors -ItemId $labelId `
+            -Field 'Id' -Value $id
+        if ($id -is [string] -and -not [string]::IsNullOrWhiteSpace($id)) {
+            if ($itemIds.ContainsKey($id)) {
+                Add-DeploymentValidationError -Errors $errors `
+                    -Message "Deployment plan item '$id' is duplicated."
+            }
+            else {
+                $itemIds[$id] = $item
+            }
+        }
+
+        foreach ($field in @(
+                'Source', 'Version', 'Target', 'RollbackCapability'
+            )) {
+            Add-DeploymentPlanStringError -Errors $errors -ItemId $labelId `
+                -Field $field `
+                -Value (Get-DeploymentMember -InputObject $item -Name $field).Value
+        }
+
+        $hash = (Get-DeploymentMember -InputObject $item -Name 'Hash').Value
+        if ($hash -isnot [string] -or $hash -cnotmatch '^[0-9a-f]{64}$') {
+            Add-DeploymentValidationError -Errors $errors `
+                -Message (
+                    "Deployment plan item '$labelId' field 'Hash' must be " +
+                    '64 lowercase hexadecimal characters.'
+                )
+        }
+
+        $type = (Get-DeploymentMember -InputObject $item -Name 'Type').Value
+        if ($type -isnot [string] -or [string]::IsNullOrWhiteSpace($type) -or
+            @('plugin', 'mcp', 'skill') -notcontains $type) {
+            Add-DeploymentValidationError -Errors $errors `
+                -Message (
+                    "Deployment plan item '$labelId' field 'Type' must be " +
+                    'plugin, mcp, or skill.'
+                )
+        }
+
         $approval = (Get-DeploymentMember -InputObject $item `
                 -Name 'Approval').Value
         if ($approval -cne 'approved') {
             Add-DeploymentValidationError -Errors $errors `
                 -Message "Deployment plan item '$($item.Id)' is not approved."
         }
+
+        $itemStatus = (Get-DeploymentMember -InputObject $item `
+                -Name 'Status').Value
+        if ($itemStatus -cne 'planned') {
+            Add-DeploymentValidationError -Errors $errors `
+                -Message "Deployment plan item '$labelId' Status must be planned."
+        }
+
+        foreach ($arrayField in @(
+                'Permissions', 'CredentialRefs', 'Conflicts', 'Dependencies',
+                'ExternalChanges'
+            )) {
+            $values = @(Get-DeploymentPlanStringArray -Errors $errors `
+                    -Item $item -ItemId $labelId -Field $arrayField)
+            if ($arrayField -eq 'Dependencies') {
+                $dependencyMap[$labelId] = $values
+            }
+            elseif ($arrayField -eq 'Conflicts') {
+                $conflictMap[$labelId] = $values
+            }
+        }
+    }
+
+    foreach ($itemId in $dependencyMap.Keys) {
+        foreach ($dependency in @($dependencyMap[$itemId])) {
+            if (-not $itemIds.ContainsKey($dependency)) {
+                Add-DeploymentValidationError -Errors $errors `
+                    -Message "Deployment plan item '$itemId' has missing dependency '$dependency'."
+            }
+        }
+    }
+
+    foreach ($leftId in $conflictMap.Keys) {
+        foreach ($rightId in @($conflictMap[$leftId])) {
+            if ($itemIds.ContainsKey($rightId)) {
+                Add-DeploymentValidationError -Errors $errors `
+                    -Message "Deployment plan items '$leftId' and '$rightId' conflict."
+            }
+        }
+    }
+
+    $orderedIds = @{}
+    while ($orderedIds.Count -lt $itemIds.Count) {
+        $madeProgress = $false
+        foreach ($itemId in $itemIds.Keys) {
+            if ($orderedIds.ContainsKey($itemId)) {
+                continue
+            }
+            $unresolved = @(
+                @($dependencyMap[$itemId]) |
+                    Where-Object {
+                        $itemIds.ContainsKey($_) -and
+                        -not $orderedIds.ContainsKey($_)
+                    }
+            )
+            if ($unresolved.Count -eq 0) {
+                $orderedIds[$itemId] = $true
+                $madeProgress = $true
+            }
+        }
+        if (-not $madeProgress) {
+            $cycleIds = @(
+                $itemIds.Keys |
+                    Where-Object { -not $orderedIds.ContainsKey($_) }
+            )
+            Add-DeploymentValidationError -Errors $errors `
+                -Message "Deployment plan dependency cycle detected among: $($cycleIds -join ', ')."
+            break
+        }
+    }
+
+    $integrity = (Get-DeploymentMember -InputObject $Plan `
+            -Name 'PlanIntegrity').Value
+    if ($integrity -isnot [string] -or $integrity -cnotmatch '^[0-9a-f]{64}$') {
+        Add-DeploymentValidationError -Errors $errors `
+            -Message 'Deployment plan PlanIntegrity is invalid.'
+    }
+    elseif ((Get-DeploymentPlanIntegrity -Plan $Plan) -cne $integrity) {
+        Add-DeploymentValidationError -Errors $errors -Message (
+            'Deployment plan PlanIntegrity does not match current Hash, ' +
+            'Source, Version, Type, Target, Dependencies, CredentialRefs, ' +
+            'Conflicts, RollbackCapability, or ExternalChanges.'
+        )
     }
 
     return [pscustomobject][ordered]@{

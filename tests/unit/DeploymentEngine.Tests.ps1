@@ -241,6 +241,53 @@ Describe 'Deployment plan construction and validation' {
         @($plan.Items[0].Dependencies).Count | Should Be 0
     }
 
+    It 'rejects approved plans whose executable or safety fields are tampered' {
+        $tamperCases = @(
+            @{ Name = 'Hash'; Mutate = { param($Plan) $Plan.Items[0].Hash = 'bad' } },
+            @{ Name = 'Source'; Mutate = { param($Plan) $Plan.Items[0].Source = '' } },
+            @{ Name = 'Version'; Mutate = { param($Plan) $Plan.Items[0].Version = '' } },
+            @{ Name = 'Type'; Mutate = { param($Plan) $Plan.Items[0].Type = 'script' } },
+            @{ Name = 'Target'; Mutate = { param($Plan) $Plan.Items[0].Target = '' } },
+            @{ Name = 'Dependencies'; Mutate = {
+                    param($Plan)
+                    $Plan.Items[0].Dependencies = @([pscustomobject]@{ Id = 'skill.b' })
+                } },
+            @{ Name = 'CredentialRefs'; Mutate = {
+                    param($Plan)
+                    $Plan.Items[0].CredentialRefs = @('missing-token')
+                } },
+            @{ Name = 'Conflicts'; Mutate = {
+                    param($Plan)
+                    $Plan.Items[0].Conflicts = @([pscustomobject]@{ Id = 'skill.b' })
+                } },
+            @{ Name = 'RollbackCapability'; Mutate = {
+                    param($Plan)
+                    $Plan.Items[0].RollbackCapability = ''
+                } },
+            @{ Name = 'ExternalChanges'; Mutate = {
+                    param($Plan)
+                    $Plan.Items[0].ExternalChanges = @([pscustomobject]@{
+                            Path = 'config.toml'
+                        })
+                } }
+        )
+
+        foreach ($case in $tamperCases) {
+            $plan = New-DeploymentPlan `
+                -Config (New-TestConfig @('skill.a')) `
+                -Whitelist (New-TestWhitelist @(
+                    (New-TestTool -Id 'skill.a' -CredentialRefs @('api-token'))
+                )) `
+                -CredentialMetadata @([pscustomobject]@{ Name = 'api-token' })
+            & $case.Mutate $plan
+
+            $validation = Test-DeploymentPlan -Plan $plan
+
+            $validation.IsValid | Should Be $false
+            Get-TestErrorText $validation | Should Match $case.Name
+        }
+    }
+
     It 'throws for a damaged plan structure' {
         { Test-DeploymentPlan -Plan ([pscustomobject]@{ Status = 'planned' }) } |
             Should Throw
@@ -322,6 +369,53 @@ Describe 'Deployment plan invocation' {
 
         $script:tamperedApprovalCalls | Should Be 0
         $result[0].Status | Should Be 'blocked'
+    }
+
+    It 'does not invoke an executor or adapter after executable fields are tampered' {
+        $script:tamperedCalls = 0
+        $plan = New-DeploymentPlan `
+            -Config (New-TestConfig @('skill.a')) `
+            -Whitelist (New-TestWhitelist @((New-TestTool -Id 'skill.a'))) `
+            -CredentialMetadata @()
+        $plan.Items[0].Source = ''
+        $adapters = @{
+            skill = {
+                param($Item)
+                $script:tamperedCalls++
+                New-OperationResult -Status 'succeeded' -Message 'adapter' `
+                    -Data ([pscustomobject]@{ ItemId = $Item.Id })
+            }
+        }
+
+        $result = @(Invoke-DeploymentPlan -Plan $plan -WhatIf:$false `
+            -AdapterMap $adapters -Executor {
+                param($Item)
+                $script:tamperedCalls++
+                New-OperationResult -Status 'succeeded' -Message 'executor' `
+                    -Data ([pscustomobject]@{ ItemId = $Item.Id })
+            })
+
+        $script:tamperedCalls | Should Be 0
+        $result[0].Status | Should Be 'blocked'
+        $result[0].Message | Should Match 'Deployment plan is invalid'
+        $result[0].Message | Should Match 'Source'
+    }
+
+    It 'validates tampered plans before WhatIf dry-run results' {
+        $plan = New-DeploymentPlan `
+            -Config (New-TestConfig @('skill.a')) `
+            -Whitelist (New-TestWhitelist @((New-TestTool -Id 'skill.a'))) `
+            -CredentialMetadata @()
+        $plan.Items[0].Source = ''
+
+        $result = @(Invoke-DeploymentPlan -Plan $plan -WhatIf:$true -Executor {
+            param($Item)
+            throw 'executor must not run'
+        })
+
+        $result[0].Status | Should Be 'blocked'
+        $result[0].Message | Should Match 'Deployment plan is invalid'
+        $result[0].Message | Should Match 'Source'
     }
 
     It 'blocks dependents after failure and continues independent items' {
