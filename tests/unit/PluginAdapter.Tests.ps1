@@ -274,7 +274,8 @@ Describe 'Install-ManagedPlugin' {
         $result.Message | Should Match '\[REDACTED\]'
         $result.Message | Should Not Match 'SECRET-TOKEN'
         $json = $result.Data | ConvertTo-Json -Depth 8 -Compress
-        $result.Data.PSObject.Properties.Name | Should Not Contain 'Result'
+        ($result.Data.PSObject.Properties.Name -join '|') |
+            Should Not Match '(^|\|)Result($|\|)'
         $json | Should Not Match 'SECRET-TOKEN'
     }
 
@@ -289,8 +290,10 @@ Describe 'Install-ManagedPlugin' {
 
         $json = $result.Data | ConvertTo-Json -Depth 8 -Compress
         $result.Status | Should Be 'succeeded'
-        $result.Data.PSObject.Properties.Name | Should Not Contain 'MarketplaceResult'
-        $result.Data.PSObject.Properties.Name | Should Not Contain 'PluginResult'
+        ($result.Data.PSObject.Properties.Name -join '|') |
+            Should Not Match '(^|\|)MarketplaceResult($|\|)'
+        ($result.Data.PSObject.Properties.Name -join '|') |
+            Should Not Match '(^|\|)PluginResult($|\|)'
         $json | Should Match 'Steps'
         $json | Should Not Match 'SECRET-TOKEN'
         $json | Should Not Match 'RAW-AUTH-TOKEN'
