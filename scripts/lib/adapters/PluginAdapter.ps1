@@ -104,10 +104,7 @@ function Get-PluginAdapterSnapshot {
 
     $snapshot = Get-PluginAdapterMember -InputObject $Tool `
         -Names @('ApprovedSnapshot', 'approved_snapshot')
-    if ($null -ne $snapshot) {
-        return $snapshot
-    }
-    return $Tool
+    return $snapshot
 }
 
 function Get-PluginAdapterSelectorFromId {
@@ -174,11 +171,13 @@ function Get-PluginInstallPlan {
 
     $snapshot = Get-PluginAdapterSnapshot -Tool $Tool
     $errors = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $snapshot) {
+        [void]$errors.Add('ApprovedSnapshot is required for plugin command planning.')
+        return New-PluginAdapterFailedPlan -Errors $errors.ToArray() -Tool $Tool
+    }
 
     $id = Get-PluginAdapterString -InputObject $snapshot -Names @('id', 'Id')
-    if ($null -eq $id) {
-        $id = Get-PluginAdapterString -InputObject $Tool -Names @('id', 'Id')
-    }
+    $type = Get-PluginAdapterString -InputObject $snapshot -Names @('type', 'Type')
     $name = Get-PluginAdapterString -InputObject $snapshot -Names @('name', 'Name')
     if ($null -eq $name) {
         $name = Get-PluginAdapterString -InputObject $Tool -Names @('name', 'Name')
@@ -190,22 +189,15 @@ function Get-PluginInstallPlan {
         -Names @('install_target', 'InstallTarget', 'Target')
     $marketplace = Get-PluginAdapterString -InputObject $snapshot `
         -Names @('marketplace_name', 'MarketplaceName', 'marketplace')
-    if ($null -eq $marketplace) {
-        $marketplace = Get-PluginAdapterString -InputObject $Tool `
-            -Names @('marketplace_name', 'MarketplaceName', 'marketplace')
-    }
     $selector = Get-PluginAdapterString -InputObject $snapshot `
         -Names @('plugin_id', 'PluginId', 'plugin_selector', 'PluginSelector')
-    if ($null -eq $selector) {
-        $selector = Get-PluginAdapterString -InputObject $Tool `
-            -Names @('plugin_id', 'PluginId', 'plugin_selector', 'PluginSelector')
-    }
     if ($null -eq $selector) {
         $selector = Get-PluginAdapterSelectorFromId -Id $id
     }
 
     foreach ($required in @(
             @{ Name = 'id'; Value = $id },
+            @{ Name = 'type'; Value = $type },
             @{ Name = 'name'; Value = $name },
             @{ Name = 'source'; Value = $source },
             @{ Name = 'version'; Value = $version },
@@ -224,6 +216,9 @@ function Get-PluginInstallPlan {
     }
     if ($null -ne $marketplace -and -not (Test-PluginAdapterSafeName -Value $marketplace)) {
         [void]$errors.Add("Marketplace name must contain only safe characters.")
+    }
+    if ($null -ne $type -and $type -ne 'plugin') {
+        [void]$errors.Add("ApprovedSnapshot type must be 'plugin'.")
     }
 
     if ($errors.Count -gt 0) {
@@ -272,6 +267,7 @@ function Get-PluginInstallPlan {
         ApprovedSnapshot = $snapshot
         Id = $id
         Name = $name
+        Type = $type
         Source = $source
         Version = $version
         Sha256 = $sha256

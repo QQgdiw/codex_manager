@@ -10,6 +10,7 @@ function New-TestPluginTool {
     $snapshot = @{
         id = 'plugin.openai-browser'
         name = 'OpenAI Browser'
+        type = 'plugin'
         source = 'https://github.com/openai/codex-plugins'
         version = 'v1.2.3'
         sha256 = ('a' * 64)
@@ -124,6 +125,57 @@ Describe 'Get-PluginInstallPlan' {
         $plan.Status | Should Be 'failed'
         $plan.Message | Should Match 'validation'
         ($plan.Errors -join '|') | Should Match 'sha256'
+    }
+
+    It 'does not use top-level marketplace_name when the approved snapshot omits it' {
+        $plan = Get-PluginInstallPlan -Tool (
+            New-TestPluginTool `
+                -SnapshotOverrides @{ marketplace_name = $null } `
+                -ToolOverrides @{ marketplace_name = 'openai-primary' }
+        )
+
+        $plan.Status | Should Be 'failed'
+        ($plan.Errors -join '|') | Should Match 'marketplace_name'
+        $plan.MarketplaceCommand | Should Be $null
+        $plan.PluginCommand | Should Be $null
+    }
+
+    It 'derives missing selector only from approved snapshot id despite a top-level selector' {
+        $plan = Get-PluginInstallPlan -Tool (
+            New-TestPluginTool `
+                -SnapshotOverrides @{
+                    id = 'plugin.snapshot-selector'
+                    plugin_id = $null
+                    plugin_selector = $null
+                } `
+                -ToolOverrides @{ plugin_selector = 'top-level-selector' }
+        )
+
+        $plan.Status | Should Be 'planned'
+        $plan.PluginSelector | Should Be 'snapshot-selector'
+        ($plan.PluginCommand.Arguments -join '|') |
+            Should Be 'plugin|add|snapshot-selector@openai-primary|--json'
+    }
+
+    It 'fails validation when the approved snapshot is missing even if top-level fields are complete' {
+        $plan = Get-PluginInstallPlan -Tool (
+            New-TestPluginTool -ToolOverrides @{
+                ApprovedSnapshot = $null
+                id = 'plugin.top-level'
+                name = 'Top Level Plugin'
+                source = 'https://github.com/openai/codex-plugins'
+                version = 'v1.2.3'
+                sha256 = ('b' * 64)
+                install_target = 'codex-plugin'
+                marketplace_name = 'openai-primary'
+                plugin_selector = 'top-level'
+            }
+        )
+
+        $plan.Status | Should Be 'failed'
+        $plan.Message | Should Match 'ApprovedSnapshot|approved snapshot'
+        $plan.MarketplaceCommand | Should Be $null
+        $plan.PluginCommand | Should Be $null
     }
 }
 
