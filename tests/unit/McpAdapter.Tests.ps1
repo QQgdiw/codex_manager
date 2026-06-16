@@ -9,7 +9,7 @@ function New-TestMcpTool {
 
     # Task 9 MCP ApprovedSnapshot extension fields:
     # type='mcp'; mcp_transport='stdio'|'http'; mcp_name is the Codex MCP name.
-    # stdio contains command, args[], working_directory, startup_file, and env key/value pairs.
+    # stdio contains command, args[], working_directory, and startup_file.
     # http contains url and optional bearer_token_env_var. Token values are never accepted.
     $snapshot = @{
         id = 'mcp.local-docs'
@@ -25,9 +25,6 @@ function New-TestMcpTool {
             args = @('dist/index.js')
             working_directory = $TestDrive
             startup_file = 'dist/index.js'
-            env = @{
-                LOG_LEVEL = 'info'
-            }
         }
         sensitive_redactions = @('SECRET-TOKEN')
     }
@@ -94,6 +91,23 @@ function New-TestStartupFile {
     Set-Content -LiteralPath (Join-Path $dist 'index.js') -Value 'process.exit(0)' -Encoding ASCII
 }
 
+function Assert-McpPlanDoesNotLeak {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Plan,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Secrets
+    )
+
+    $json = $Plan | ConvertTo-Json -Depth 8 -Compress
+    foreach ($secret in $Secrets) {
+        $Plan.Message | Should Not Match ([regex]::Escape($secret))
+        (@($Plan.Errors) -join '|') | Should Not Match ([regex]::Escape($secret))
+        $json | Should Not Match ([regex]::Escape($secret))
+    }
+}
+
 Describe 'Get-McpInstallPlan' {
     BeforeAll {
         . $mcpLibrary
@@ -155,6 +169,36 @@ Describe 'Get-McpInstallPlan' {
         (@($plan.SensitiveRedactions) -join '|') | Should Not Match 'SECRET-TOKEN'
     }
 
+    It 'rejects HTTP URLs with query, fragment, or userinfo without leaking secret text' {
+        $unsafeUrls = @(
+            'https://mcp.example.test/sse?token=RAW-QUERY-TOKEN',
+            'https://mcp.example.test/sse#RAW-FRAGMENT-TOKEN',
+            'https://user:RAW-USERINFO-TOKEN@mcp.example.test/sse'
+        )
+        foreach ($unsafeUrl in $unsafeUrls) {
+            $plan = Get-McpInstallPlan -Tool (
+                New-TestMcpTool -SnapshotOverrides @{
+                    mcp_transport = 'http'
+                    mcp_name = 'remote-docs'
+                    stdio = $null
+                    http = @{
+                        url = $unsafeUrl
+                    }
+                }
+            )
+
+            $plan.Status | Should Be 'failed'
+            $plan.AddCommand | Should Be $null
+            $plan.Message | Should Match 'http.url'
+            Assert-McpPlanDoesNotLeak -Plan $plan -Secrets @(
+                'RAW-QUERY-TOKEN',
+                'RAW-FRAGMENT-TOKEN',
+                'RAW-USERINFO-TOKEN',
+                $unsafeUrl
+            )
+        }
+    }
+
     It 'rejects unsafe bearer token environment variable names' {
         $plan = Get-McpInstallPlan -Tool (
             New-TestMcpTool -SnapshotOverrides @{
@@ -190,6 +234,30 @@ Describe 'Get-McpInstallPlan' {
         $plan.Message | Should Match 'stdio.env_names'
     }
 
+    It 'rejects stdio env values without leaking the value' {
+        New-TestStartupFile
+        $envValue = 'RAW-STDIO-ENV-SECRET'
+
+        $plan = Get-McpInstallPlan -Tool (
+            New-TestMcpTool -SnapshotOverrides @{
+                stdio = @{
+                    command = 'node'
+                    args = @('dist/index.js')
+                    working_directory = $TestDrive
+                    startup_file = 'dist/index.js'
+                    env = @{
+                        PUBLIC_CONFIG = $envValue
+                    }
+                }
+            }
+        )
+
+        $plan.Status | Should Be 'failed'
+        $plan.AddCommand | Should Be $null
+        $plan.Message | Should Match 'stdio.env'
+        Assert-McpPlanDoesNotLeak -Plan $plan -Secrets @($envValue)
+    }
+
     It 'fails precheck when the stdio startup file is missing' {
         $plan = Get-McpInstallPlan -Tool (
             New-TestMcpTool -SnapshotOverrides @{
@@ -205,6 +273,76 @@ Describe 'Get-McpInstallPlan' {
         $plan.Status | Should Be 'failed'
         $plan.Message | Should Match 'startup file'
         $plan.AddCommand | Should Be $null
+    }
+
+    It 'does not leak sensitive missing startup file paths in failed plans' {
+        $rawStartupPath = 'auth.json\token-secret-server.js'
+        $plan = Get-McpInstallPlan -Tool (
+            New-TestMcpTool -SnapshotOverrides @{
+                stdio = @{
+                    command = 'node'
+                    args = @('dist/index.js')
+                    working_directory = $TestDrive
+                    startup_file = $rawStartupPath
+                }
+            }
+        )
+
+        $plan.Status | Should Be 'failed'
+        $plan.Message | Should Match 'startup file'
+        $plan.AddCommand | Should Be $null
+        Assert-McpPlanDoesNotLeak -Plan $plan -Secrets @(
+            $rawStartupPath,
+            'auth.json',
+            'token-secret-server.js'
+        )
+    }
+
+    It 'rejects absolute stdio startup files even when they exist' {
+        $workRoot = Join-Path $TestDrive 'work'
+        $outsideRoot = Join-Path $TestDrive 'outside'
+        New-Item -ItemType Directory -Path $workRoot, $outsideRoot -Force | Out-Null
+        $absoluteStartupFile = Join-Path $outsideRoot 'server.js'
+        Set-Content -LiteralPath $absoluteStartupFile -Value 'process.exit(0)' -Encoding ASCII
+
+        $plan = Get-McpInstallPlan -Tool (
+            New-TestMcpTool -SnapshotOverrides @{
+                stdio = @{
+                    command = 'node'
+                    args = @('dist/index.js')
+                    working_directory = $workRoot
+                    startup_file = $absoluteStartupFile
+                }
+            }
+        )
+
+        $plan.Status | Should Be 'failed'
+        $plan.AddCommand | Should Be $null
+        $plan.Message | Should Match 'startup_file'
+    }
+
+    It 'rejects stdio startup files that escape the working directory' {
+        $workRoot = Join-Path $TestDrive 'work'
+        $outsideRoot = Join-Path $TestDrive 'secrets'
+        New-Item -ItemType Directory -Path $workRoot, $outsideRoot -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $outsideRoot 'server.js') `
+            -Value 'process.exit(0)' `
+            -Encoding ASCII
+
+        $plan = Get-McpInstallPlan -Tool (
+            New-TestMcpTool -SnapshotOverrides @{
+                stdio = @{
+                    command = 'node'
+                    args = @('dist/index.js')
+                    working_directory = $workRoot
+                    startup_file = '..\secrets\server.js'
+                }
+            }
+        )
+
+        $plan.Status | Should Be 'failed'
+        $plan.AddCommand | Should Be $null
+        $plan.Message | Should Match 'working_directory'
     }
 
     It 'does not use top-level fields when the approved snapshot omits MCP fields' {
@@ -257,7 +395,7 @@ Describe 'Install-ManagedMcp' {
         $result.Status | Should Be 'succeeded'
         $script:calls.Count | Should Be 1
         ($script:calls[0].Arguments -join '|') |
-            Should Be 'mcp|add|local-docs|--env|LOG_LEVEL=info|--|node|dist/index.js'
+            Should Be 'mcp|add|local-docs|--|node|dist/index.js'
         $script:journalEntries.Count | Should Be 1
         $script:journalEntries[0].Type | Should Be 'ExternalChange'
         $script:journalEntries[0].RollbackCommand | Should Be ''

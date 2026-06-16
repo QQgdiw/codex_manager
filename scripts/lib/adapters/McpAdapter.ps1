@@ -343,7 +343,35 @@ function Test-McpAdapterLocalPathCandidate {
     )
 }
 
-function Get-McpStartupFilePath {
+function Test-McpAdapterPathWithinRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Root
+    )
+
+    $rootFullPath = [IO.Path]::GetFullPath($Root).TrimEnd(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar
+    )
+    $pathFullPath = [IO.Path]::GetFullPath($Path)
+
+    return (
+        [string]::Equals($pathFullPath, $rootFullPath, [StringComparison]::OrdinalIgnoreCase) -or
+        $pathFullPath.StartsWith(
+            $rootFullPath + [IO.Path]::DirectorySeparatorChar,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        $pathFullPath.StartsWith(
+            $rootFullPath + [IO.Path]::AltDirectorySeparatorChar,
+            [StringComparison]::OrdinalIgnoreCase
+        )
+    )
+}
+
+function Resolve-McpStartupFilePath {
     param(
         [AllowNull()][object]$Stdio,
         [AllowNull()][string]$WorkingDirectory,
@@ -367,15 +395,36 @@ function Get-McpStartupFilePath {
         }
     }
     if ($null -eq $startup) {
-        return $null
+        return [pscustomobject][ordered]@{
+            Path = $null
+            Error = $null
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+        return [pscustomobject][ordered]@{
+            Path = $null
+            Error = 'stdio.working_directory is required for startup file validation.'
+        }
     }
     if ([IO.Path]::IsPathRooted($startup)) {
-        return [IO.Path]::GetFullPath($startup)
+        return [pscustomobject][ordered]@{
+            Path = $null
+            Error = 'stdio.startup_file must be relative to stdio.working_directory.'
+        }
     }
-    if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
-        return [IO.Path]::GetFullPath((Join-Path $WorkingDirectory $startup))
+    $workingDirectoryPath = [IO.Path]::GetFullPath($WorkingDirectory)
+    $startupPath = [IO.Path]::GetFullPath((Join-Path $workingDirectoryPath $startup))
+    if (-not (Test-McpAdapterPathWithinRoot -Path $startupPath -Root $workingDirectoryPath)) {
+        return [pscustomobject][ordered]@{
+            Path = $null
+            Error = 'stdio.startup_file must stay within stdio.working_directory.'
+        }
     }
-    return [IO.Path]::GetFullPath($startup)
+
+    return [pscustomobject][ordered]@{
+        Path = $startupPath
+        Error = $null
+    }
 }
 
 function New-McpAdapterFailedPlan {
@@ -485,24 +534,9 @@ function Get-McpInstallPlan {
         $envArgs = @()
         $env = Get-McpAdapterMember -InputObject $stdio -Names @('env', 'Env')
         if ($null -ne $env) {
-            if (-not ($env -is [System.Collections.IDictionary])) {
-                [void]$errors.Add('stdio.env must be a key/value dictionary.')
-            }
-            else {
-                foreach ($key in @($env.Keys | Sort-Object)) {
-                    $envName = "$key"
-                    if (-not (Test-McpAdapterSafeEnvName -Value $envName)) {
-                        [void]$errors.Add("stdio.env key '$envName' is not a safe environment variable name.")
-                        continue
-                    }
-                    if (Test-McpAdapterSensitiveEnvName -Value $envName) {
-                        [void]$errors.Add("stdio.env key '$envName' may expose a secret value; use an env var name reference.")
-                        continue
-                    }
-                    $envValue = [string]$env[$key]
-                    $envArgs += @('--env', "$envName=$envValue")
-                }
-            }
+            [void]$errors.Add(
+                'stdio.env is not supported because environment values may expose secrets.'
+            )
         }
         $envNames = @(
             Get-McpAdapterArray -Value (
@@ -517,14 +551,18 @@ function Get-McpInstallPlan {
             )
         }
 
-        $startupPath = Get-McpStartupFilePath -Stdio $stdio `
+        $startupCheck = Resolve-McpStartupFilePath -Stdio $stdio `
             -WorkingDirectory $workingDirectory `
             -Command $command `
             -Arguments $args
+        if ($null -ne $startupCheck.Error) {
+            [void]$errors.Add($startupCheck.Error)
+        }
+        $startupPath = $startupCheck.Path
         if ($null -ne $startupPath) {
             $startupExists = Test-Path -LiteralPath $startupPath -PathType Leaf
             if (-not $startupExists) {
-                [void]$errors.Add("MCP stdio startup file '$startupPath' does not exist.")
+                [void]$errors.Add('MCP stdio startup file does not exist.')
             }
         }
 
@@ -550,6 +588,11 @@ function Get-McpInstallPlan {
             if (-not [Uri]::TryCreate($url, [UriKind]::Absolute, [ref]$uri) -or
                 @('http', 'https') -notcontains $uri.Scheme) {
                 [void]$errors.Add('http.url must be an absolute http or https URL.')
+            }
+            elseif (-not [string]::IsNullOrEmpty($uri.UserInfo) -or
+                -not [string]::IsNullOrEmpty($uri.Query) -or
+                -not [string]::IsNullOrEmpty($uri.Fragment)) {
+                [void]$errors.Add('http.url must not include userinfo, query, or fragment.')
             }
         }
         if ($null -ne $bearerTokenEnvVar -and
