@@ -105,6 +105,16 @@ Describe 'Layered tool verification' {
         (@($result.Checks) -join "`n") | Should Match 'credential_missing'
     }
 
+    It 'records missing credential_refs during static verification' {
+        $tool = New-TestVerificationTool -OmitCredentialRefs
+
+        $result = Invoke-StaticVerification -Tool $tool
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'credential_refs_missing'
+        (@($result.Checks) -join "`n") | Should Match 'credential_refs_missing'
+    }
+
     It 'returns blocked for load verification when required credential metadata is absent' {
         $tool = New-TestVerificationTool `
             -CredentialRefs @('service-token') `
@@ -117,20 +127,56 @@ Describe 'Layered tool verification' {
         $result.Level | Should Be 'load'
     }
 
-    It 'continues load verification when credential_refs field is absent' {
-        $script:verifierCalled = $false
+    It 'blocks load and smoke verification without calling verifiers when credential_refs field is absent' {
+        $script:loadVerifierCalled = $false
+        $script:smokeVerifierCalled = $false
         $tool = New-TestVerificationTool `
             -OmitCredentialRefs `
             -LoadVerifier {
-                $script:verifierCalled = $true
-                @{ Status = 'load_verified'; Message = 'loaded without credentials' }
+                $script:loadVerifierCalled = $true
+                @{ Status = 'load_verified'; Message = 'loaded' }
+            } `
+            -SmokeVerifier {
+                $script:smokeVerifierCalled = $true
+                @{ Status = 'smoke_verified'; Message = 'smoked' }
             }
 
-        $result = Invoke-LoadVerification -Tool $tool
+        $loadResult = Invoke-LoadVerification -Tool $tool
+        $smokeResult = Invoke-SmokeVerification -Tool $tool
 
-        $result.Status | Should Be 'load_verified'
-        $result.Message | Should Be 'loaded without credentials'
-        $script:verifierCalled | Should Be $true
+        $loadResult.Status | Should Be 'blocked'
+        $loadResult.ErrorCode | Should Be 'credential_refs_missing'
+        (@($loadResult.Checks) -join "`n") | Should Match 'credential_refs_missing'
+        $smokeResult.Status | Should Be 'blocked'
+        $smokeResult.ErrorCode | Should Be 'credential_refs_missing'
+        (@($smokeResult.Checks) -join "`n") | Should Match 'credential_refs_missing'
+        $script:loadVerifierCalled | Should Be $false
+        $script:smokeVerifierCalled | Should Be $false
+    }
+
+    It 'continues load and smoke verification when credential_refs is explicitly empty' {
+        $script:loadVerifierCallCount = 0
+        $script:smokeVerifierCalled = $false
+        $tool = New-TestVerificationTool `
+            -CredentialRefs @() `
+            -LoadVerifier {
+                $script:loadVerifierCallCount += 1
+                @{ Status = 'load_verified'; Message = 'loaded without credentials' }
+            } `
+            -SmokeVerifier {
+                $script:smokeVerifierCalled = $true
+                @{ Status = 'smoke_verified'; Message = 'smoked without credentials' }
+            }
+
+        $loadResult = Invoke-LoadVerification -Tool $tool
+        $smokeResult = Invoke-SmokeVerification -Tool $tool
+
+        $loadResult.Status | Should Be 'load_verified'
+        $loadResult.Message | Should Be 'loaded without credentials'
+        $smokeResult.Status | Should Be 'smoke_verified'
+        $smokeResult.Message | Should Be 'smoked without credentials'
+        $script:loadVerifierCallCount | Should Be 2
+        $script:smokeVerifierCalled | Should Be $true
     }
 
     It 'blocks load and smoke verification without calling verifiers when credential metadata is absent' {

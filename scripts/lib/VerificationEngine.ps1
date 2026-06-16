@@ -166,6 +166,18 @@ function Test-VerificationCredentialMetadata {
     return $true
 }
 
+function Test-VerificationCredentialRefsDeclared {
+    param([object]$Tool)
+
+    foreach ($name in @('credential_refs', 'CredentialRefs')) {
+        if ($null -ne $Tool.PSObject.Properties[$name]) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Get-VerificationAdapterResultValue {
     param(
         [object]$AdapterResult,
@@ -287,11 +299,21 @@ function Invoke-StaticVerification {
         }
     }
 
-    if (-not (Test-VerificationCredentialMetadata -Tool $Tool)) {
+    $credentialRefsDeclared = Test-VerificationCredentialRefsDeclared -Tool $Tool
+    if (-not $credentialRefsDeclared) {
+        $checks += 'credential_refs_missing'
+        $errors += 'Missing required field: credential_refs'
+    }
+    elseif (-not (Test-VerificationCredentialMetadata -Tool $Tool)) {
         $checks += 'credential_missing'
     }
 
     if ($errors.Count -gt 0) {
+        $errorCode = 'static_required_field_missing'
+        if (-not $credentialRefsDeclared) {
+            $errorCode = 'credential_refs_missing'
+        }
+
         return New-VerificationResult `
             -Tool $Tool `
             -Level 'static' `
@@ -299,7 +321,7 @@ function Invoke-StaticVerification {
             -Message ($errors -join '; ') `
             -StartedAt $startedAt `
             -Checks $checks `
-            -ErrorCode 'static_required_field_missing'
+            -ErrorCode $errorCode
     }
 
     return New-VerificationResult `
@@ -321,6 +343,17 @@ function Invoke-LoadVerification {
     Test-VerificationToolObject -Tool $Tool
     $startedAt = [DateTime]::UtcNow
     $staticResult = Invoke-StaticVerification -Tool $Tool
+    if (@($staticResult.Checks) -contains 'credential_refs_missing') {
+        return New-VerificationResult `
+            -Tool $Tool `
+            -Level 'load' `
+            -Status 'blocked' `
+            -Message 'Credential requirement declaration is missing.' `
+            -StartedAt $startedAt `
+            -Checks @($staticResult.Checks) `
+            -ErrorCode 'credential_refs_missing'
+    }
+
     if ($staticResult.Status -ne 'static_verified') {
         return New-VerificationResult `
             -Tool $Tool `
@@ -392,9 +425,14 @@ function Invoke-SmokeVerification {
     if ($loadResult.Status -ne 'load_verified') {
         $errorCode = 'load_not_verified'
         $message = 'Smoke verification requires successful load verification.'
-        if ($loadResult.ErrorCode -eq 'credential_missing') {
-            $errorCode = 'credential_missing'
-            $message = 'Required credential metadata is missing.'
+        if (@('credential_missing', 'credential_refs_missing') -contains $loadResult.ErrorCode) {
+            $errorCode = $loadResult.ErrorCode
+            if ($loadResult.ErrorCode -eq 'credential_missing') {
+                $message = 'Required credential metadata is missing.'
+            }
+            else {
+                $message = 'Credential requirement declaration is missing.'
+            }
         }
 
         return New-VerificationResult `
