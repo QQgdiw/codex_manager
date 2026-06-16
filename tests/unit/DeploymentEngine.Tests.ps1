@@ -57,6 +57,17 @@ function Get-TestErrorText {
     return (@($Validation.Errors) -join [Environment]::NewLine)
 }
 
+function Sync-TestPlainPlanIntegrity {
+    param([object]$Plan)
+
+    $integrityMember = $Plan.PSObject.Properties['PlanIntegrity']
+    if ($null -ne $integrityMember -and
+        $null -ne (Get-Command -Name Get-DeploymentPlanIntegrity `
+            -ErrorAction SilentlyContinue)) {
+        $Plan.PlanIntegrity = Get-DeploymentPlanIntegrity -Plan $Plan
+    }
+}
+
 Describe 'Deployment plan construction and validation' {
     BeforeAll {
         . $deploymentLibrary
@@ -416,6 +427,75 @@ Describe 'Deployment plan invocation' {
         $result[0].Status | Should Be 'blocked'
         $result[0].Message | Should Match 'Deployment plan is invalid'
         $result[0].Message | Should Match 'Source'
+    }
+
+    It 'blocks execution when tampered executable fields recompute plain integrity' {
+        $script:plainIntegrityBypassCalls = 0
+        $plan = New-DeploymentPlan `
+            -Config (New-TestConfig @('skill.a')) `
+            -Whitelist (New-TestWhitelist @((New-TestTool -Id 'skill.a'))) `
+            -CredentialMetadata @()
+        $plan.Items[0].Source = 'https://example.invalid/tampered'
+        $plan.Items[0].Hash = ('b' * 64)
+        Sync-TestPlainPlanIntegrity -Plan $plan
+
+        $result = @(Invoke-DeploymentPlan -Plan $plan -WhatIf:$false -Executor {
+            param($Item)
+            $script:plainIntegrityBypassCalls++
+            New-OperationResult -Status 'succeeded' -Message 'unexpected' `
+                -Data ([pscustomobject]@{ ItemId = $Item.Id })
+        })
+
+        $script:plainIntegrityBypassCalls | Should Be 0
+        $result[0].Status | Should Be 'blocked'
+        $result[0].Message | Should Match 'Deployment plan is invalid'
+    }
+
+    It 'blocks execution when credential refs are changed after planning' {
+        $script:missingCredentialCalls = 0
+        $plan = New-DeploymentPlan `
+            -Config (New-TestConfig @('skill.a')) `
+            -Whitelist (New-TestWhitelist @(
+                (New-TestTool -Id 'skill.a' -CredentialRefs @('api-token'))
+            )) `
+            -CredentialMetadata @([pscustomobject]@{ Name = 'api-token' })
+        $plan.Items[0].CredentialRefs = @('missing-token')
+        Sync-TestPlainPlanIntegrity -Plan $plan
+
+        $result = @(Invoke-DeploymentPlan -Plan $plan -WhatIf:$false -Executor {
+            param($Item)
+            $script:missingCredentialCalls++
+            New-OperationResult -Status 'succeeded' -Message 'unexpected' `
+                -Data ([pscustomobject]@{ ItemId = $Item.Id })
+        })
+
+        $script:missingCredentialCalls | Should Be 0
+        $result[0].Status | Should Be 'blocked'
+        $result[0].Message | Should Match 'CredentialRefs|credential'
+    }
+
+    It 'blocks execution when plan item order is changed after planning' {
+        $script:orderTamperCalls = New-Object System.Collections.Generic.List[string]
+        $plan = New-DeploymentPlan `
+            -Config (New-TestConfig @('skill.base', 'skill.child')) `
+            -Whitelist (New-TestWhitelist @(
+                (New-TestTool -Id 'skill.base'),
+                (New-TestTool -Id 'skill.child' -Dependencies @('skill.base'))
+            )) `
+            -CredentialMetadata @()
+        $plan.Items = @($plan.Items[1], $plan.Items[0])
+        Sync-TestPlainPlanIntegrity -Plan $plan
+
+        $result = @(Invoke-DeploymentPlan -Plan $plan -WhatIf:$false -Executor {
+            param($Item)
+            $script:orderTamperCalls.Add($Item.Id)
+            New-OperationResult -Status 'succeeded' -Message 'unexpected' `
+                -Data ([pscustomobject]@{ ItemId = $Item.Id })
+        })
+
+        @($script:orderTamperCalls).Count | Should Be 0
+        $result[0].Status | Should Be 'blocked'
+        $result[0].Message | Should Match 'order|topolog|dependency'
     }
 
     It 'blocks dependents after failure and continues independent items' {

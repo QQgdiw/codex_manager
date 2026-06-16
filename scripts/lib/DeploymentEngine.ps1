@@ -1,5 +1,9 @@
 $deploymentLibraryRoot = $PSScriptRoot
 
+if (-not ('Security.Cryptography.ProtectedData' -as [type])) {
+    Add-Type -AssemblyName System.Security
+}
+
 if (-not (Get-Command -Name New-OperationResult -ErrorAction SilentlyContinue)) {
     . (Join-Path $deploymentLibraryRoot 'Common.ps1')
 }
@@ -260,6 +264,8 @@ function ConvertTo-DeploymentPlanIntegrityPayload {
         SchemaVersion = (Get-DeploymentMember -InputObject $Plan `
             -Name 'SchemaVersion').Value
         Status = (Get-DeploymentMember -InputObject $Plan -Name 'Status').Value
+        CredentialMetadataNames = @((Get-DeploymentMember -InputObject $Plan `
+                -Name 'CredentialMetadataNames').Value)
         Items = $items
         Errors = @((Get-DeploymentMember -InputObject $Plan -Name 'Errors').Value)
         Warnings = @((Get-DeploymentMember -InputObject $Plan -Name 'Warnings').Value)
@@ -282,6 +288,51 @@ function Get-DeploymentPlanIntegrity {
         $sha256.Dispose()
     }
     return (($hash | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+
+function Get-DeploymentPlanIntegrityEntropy {
+    return [Text.Encoding]::UTF8.GetBytes(
+        'codex.deployment.plan.integrity.v1'
+    )
+}
+
+function Protect-DeploymentPlanIntegrity {
+    param(
+        [string]$Digest
+    )
+
+    $plainBytes = [Text.Encoding]::UTF8.GetBytes($Digest)
+    $protectedBytes = [Security.Cryptography.ProtectedData]::Protect(
+        $plainBytes,
+        (Get-DeploymentPlanIntegrityEntropy),
+        [Security.Cryptography.DataProtectionScope]::CurrentUser
+    )
+    return [Convert]::ToBase64String($protectedBytes)
+}
+
+function Unprotect-DeploymentPlanIntegrity {
+    param(
+        [AllowNull()]
+        [object]$ProtectedDigest
+    )
+
+    if ($ProtectedDigest -isnot [string] -or
+        [string]::IsNullOrWhiteSpace($ProtectedDigest)) {
+        return $null
+    }
+
+    try {
+        $protectedBytes = [Convert]::FromBase64String($ProtectedDigest)
+        $plainBytes = [Security.Cryptography.ProtectedData]::Unprotect(
+            $protectedBytes,
+            (Get-DeploymentPlanIntegrityEntropy),
+            [Security.Cryptography.DataProtectionScope]::CurrentUser
+        )
+        return [Text.Encoding]::UTF8.GetString($plainBytes)
+    }
+    catch {
+        return $null
+    }
 }
 
 function Add-DeploymentPlanStringError {
@@ -412,6 +463,7 @@ function New-DeploymentPlan {
         $CredentialMetadata = @(Get-DeploymentCredentialMetadata)
     }
     $credentialNames = @{}
+    $credentialNameList = New-Object System.Collections.Generic.List[string]
     foreach ($metadata in @($CredentialMetadata)) {
         if (-not (Test-DeploymentObject -Value $metadata)) {
             continue
@@ -419,7 +471,10 @@ function New-DeploymentPlan {
         $nameMember = Get-DeploymentMember -InputObject $metadata -Name 'Name'
         if ($nameMember.Exists -and $nameMember.Value -is [string] -and
             -not [string]::IsNullOrWhiteSpace($nameMember.Value)) {
-            $credentialNames[$nameMember.Value] = $true
+            if (-not $credentialNames.ContainsKey($nameMember.Value)) {
+                $credentialNames[$nameMember.Value] = $true
+                $credentialNameList.Add($nameMember.Value)
+            }
         }
     }
 
@@ -580,12 +635,16 @@ function New-DeploymentPlan {
     $plan = [pscustomobject][ordered]@{
         SchemaVersion = '1.0'
         Status = 'planned'
+        CredentialMetadataNames = $credentialNameList.ToArray()
         Items = $orderedItems.ToArray()
         Errors = $errors.ToArray()
         Warnings = $warnings.ToArray()
         PlanIntegrity = $null
+        ProtectedPlanIntegrity = $null
     }
     $plan.PlanIntegrity = Get-DeploymentPlanIntegrity -Plan $plan
+    $plan.ProtectedPlanIntegrity = Protect-DeploymentPlanIntegrity `
+        -Digest $plan.PlanIntegrity
     return $plan
 }
 
@@ -603,7 +662,7 @@ function Test-DeploymentPlan {
 
     foreach ($required in @(
             'SchemaVersion', 'Status', 'Items', 'Errors', 'Warnings',
-            'PlanIntegrity'
+            'CredentialMetadataNames', 'ProtectedPlanIntegrity'
         )) {
         $member = Get-DeploymentMember -InputObject $Plan -Name $required
         if (-not $member.Exists) {
@@ -614,15 +673,35 @@ function Test-DeploymentPlan {
     $items = (Get-DeploymentMember -InputObject $Plan -Name 'Items').Value
     $storedErrors = (Get-DeploymentMember -InputObject $Plan -Name 'Errors').Value
     $warnings = (Get-DeploymentMember -InputObject $Plan -Name 'Warnings').Value
+    $credentialMetadataNames = (Get-DeploymentMember -InputObject $Plan `
+            -Name 'CredentialMetadataNames').Value
     if ($items -isnot [System.Array] -or
         $storedErrors -isnot [System.Array] -or
-        $warnings -isnot [System.Array]) {
-        throw 'Deployment plan Items, Errors, and Warnings must be arrays.'
+        $warnings -isnot [System.Array] -or
+        $credentialMetadataNames -isnot [System.Array]) {
+        throw (
+            'Deployment plan Items, Errors, Warnings, and ' +
+            'CredentialMetadataNames must be arrays.'
+        )
     }
 
     $errors = New-Object System.Collections.Generic.List[string]
     foreach ($errorText in $storedErrors) {
         Add-DeploymentValidationError -Errors $errors -Message "$errorText"
+    }
+
+    $credentialNameSet = @{}
+    for ($index = 0; $index -lt $credentialMetadataNames.Count; $index++) {
+        $name = $credentialMetadataNames[$index]
+        if ($name -isnot [string] -or [string]::IsNullOrWhiteSpace($name)) {
+            Add-DeploymentValidationError -Errors $errors `
+                -Message (
+                    "Deployment plan CredentialMetadataNames[$index] " +
+                    'must be a non-empty string.'
+                )
+            continue
+        }
+        $credentialNameSet[$name] = $true
     }
 
     $schemaVersion = (Get-DeploymentMember -InputObject $Plan `
@@ -640,6 +719,7 @@ function Test-DeploymentPlan {
     $itemIds = @{}
     $dependencyMap = @{}
     $conflictMap = @{}
+    $currentOrder = New-Object System.Collections.Generic.List[string]
     foreach ($item in $items) {
         if (-not (Test-DeploymentObject -Value $item)) {
             throw 'Deployment plan contains a damaged item.'
@@ -672,6 +752,7 @@ function Test-DeploymentPlan {
             }
             else {
                 $itemIds[$id] = $item
+                $currentOrder.Add($id)
             }
         }
 
@@ -728,6 +809,17 @@ function Test-DeploymentPlan {
             elseif ($arrayField -eq 'Conflicts') {
                 $conflictMap[$labelId] = $values
             }
+            elseif ($arrayField -eq 'CredentialRefs') {
+                foreach ($credentialRef in $values) {
+                    if (-not $credentialNameSet.ContainsKey($credentialRef)) {
+                        Add-DeploymentValidationError -Errors $errors `
+                            -Message (
+                                "Deployment plan item '$labelId' CredentialRefs " +
+                                "requires missing credential '$credentialRef'."
+                            )
+                    }
+                }
+            }
         }
     }
 
@@ -750,9 +842,10 @@ function Test-DeploymentPlan {
     }
 
     $orderedIds = @{}
-    while ($orderedIds.Count -lt $itemIds.Count) {
+    $stableOrder = New-Object System.Collections.Generic.List[string]
+    while ($orderedIds.Count -lt $currentOrder.Count) {
         $madeProgress = $false
-        foreach ($itemId in $itemIds.Keys) {
+        foreach ($itemId in $currentOrder) {
             if ($orderedIds.ContainsKey($itemId)) {
                 continue
             }
@@ -765,6 +858,7 @@ function Test-DeploymentPlan {
             )
             if ($unresolved.Count -eq 0) {
                 $orderedIds[$itemId] = $true
+                $stableOrder.Add($itemId)
                 $madeProgress = $true
             }
         }
@@ -779,17 +873,32 @@ function Test-DeploymentPlan {
         }
     }
 
-    $integrity = (Get-DeploymentMember -InputObject $Plan `
-            -Name 'PlanIntegrity').Value
-    if ($integrity -isnot [string] -or $integrity -cnotmatch '^[0-9a-f]{64}$') {
-        Add-DeploymentValidationError -Errors $errors `
-            -Message 'Deployment plan PlanIntegrity is invalid.'
+    if ($stableOrder.Count -eq $currentOrder.Count) {
+        for ($index = 0; $index -lt $currentOrder.Count; $index++) {
+            if ($stableOrder[$index] -cne $currentOrder[$index]) {
+                Add-DeploymentValidationError -Errors $errors -Message (
+                    'Deployment plan item order is not the stable ' +
+                    'topological dependency order.'
+                )
+                break
+            }
+        }
     }
-    elseif ((Get-DeploymentPlanIntegrity -Plan $Plan) -cne $integrity) {
+
+    $protectedIntegrity = (Get-DeploymentMember -InputObject $Plan `
+            -Name 'ProtectedPlanIntegrity').Value
+    $unprotectedIntegrity = Unprotect-DeploymentPlanIntegrity `
+        -ProtectedDigest $protectedIntegrity
+    if ($unprotectedIntegrity -isnot [string] -or
+        $unprotectedIntegrity -cnotmatch '^[0-9a-f]{64}$') {
+        Add-DeploymentValidationError -Errors $errors `
+            -Message 'Deployment plan ProtectedPlanIntegrity is invalid.'
+    }
+    elseif ((Get-DeploymentPlanIntegrity -Plan $Plan) -cne
+        $unprotectedIntegrity) {
         Add-DeploymentValidationError -Errors $errors -Message (
-            'Deployment plan PlanIntegrity does not match current Hash, ' +
-            'Source, Version, Type, Target, Dependencies, CredentialRefs, ' +
-            'Conflicts, RollbackCapability, or ExternalChanges.'
+            'Deployment plan ProtectedPlanIntegrity does not match the ' +
+            'current execution fields, credential metadata names, or item order.'
         )
     }
 
