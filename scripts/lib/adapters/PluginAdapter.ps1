@@ -179,9 +179,6 @@ function Get-PluginInstallPlan {
     $id = Get-PluginAdapterString -InputObject $snapshot -Names @('id', 'Id')
     $type = Get-PluginAdapterString -InputObject $snapshot -Names @('type', 'Type')
     $name = Get-PluginAdapterString -InputObject $snapshot -Names @('name', 'Name')
-    if ($null -eq $name) {
-        $name = Get-PluginAdapterString -InputObject $Tool -Names @('name', 'Name')
-    }
     $source = Get-PluginAdapterString -InputObject $snapshot -Names @('source', 'Source')
     $version = Get-PluginAdapterString -InputObject $snapshot -Names @('version', 'Version')
     $sha256 = Get-PluginAdapterString -InputObject $snapshot -Names @('sha256', 'Hash')
@@ -249,10 +246,6 @@ function Get-PluginInstallPlan {
     $redactions = @(
         (Get-PluginAdapterArray -Value (
             Get-PluginAdapterMember -InputObject $snapshot `
-                -Names @('sensitive_redactions', 'SensitiveRedactions')
-        )) +
-        (Get-PluginAdapterArray -Value (
-            Get-PluginAdapterMember -InputObject $Tool `
                 -Names @('sensitive_redactions', 'SensitiveRedactions')
         )) |
             Where-Object { -not [string]::IsNullOrEmpty([string]$_) } |

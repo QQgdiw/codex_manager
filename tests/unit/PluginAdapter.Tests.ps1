@@ -140,6 +140,19 @@ Describe 'Get-PluginInstallPlan' {
         $plan.PluginCommand | Should Be $null
     }
 
+    It 'does not use top-level name when the approved snapshot omits it' {
+        $plan = Get-PluginInstallPlan -Tool (
+            New-TestPluginTool `
+                -SnapshotOverrides @{ name = $null } `
+                -ToolOverrides @{ Name = 'Top Level Name' }
+        )
+
+        $plan.Status | Should Be 'failed'
+        ($plan.Errors -join '|') | Should Match 'name'
+        $plan.MarketplaceCommand | Should Be $null
+        $plan.PluginCommand | Should Be $null
+    }
+
     It 'derives missing selector only from approved snapshot id despite a top-level selector' {
         $plan = Get-PluginInstallPlan -Tool (
             New-TestPluginTool `
