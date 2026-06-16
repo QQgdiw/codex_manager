@@ -1,0 +1,282 @@
+$projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$pluginLibrary = Join-Path $projectRoot 'scripts\lib\adapters\PluginAdapter.ps1'
+
+function New-TestPluginTool {
+    param(
+        [hashtable]$SnapshotOverrides = @{},
+        [hashtable]$ToolOverrides = @{}
+    )
+
+    $snapshot = @{
+        id = 'plugin.openai-browser'
+        name = 'OpenAI Browser'
+        source = 'https://github.com/openai/codex-plugins'
+        version = 'v1.2.3'
+        sha256 = ('a' * 64)
+        install_target = 'codex-plugin'
+        marketplace_name = 'openai-primary'
+        plugin_id = 'openai-browser'
+        sensitive_redactions = @('SECRET-TOKEN')
+    }
+    foreach ($key in $SnapshotOverrides.Keys) {
+        if ($null -eq $SnapshotOverrides[$key]) {
+            [void]$snapshot.Remove($key)
+        }
+        else {
+            $snapshot[$key] = $SnapshotOverrides[$key]
+        }
+    }
+
+    $tool = @{
+        Id = 'plugin.openai-browser'
+        Name = 'OpenAI Browser'
+        Type = 'plugin'
+        ApprovedSnapshot = [pscustomobject]$snapshot
+    }
+    foreach ($key in $ToolOverrides.Keys) {
+        if ($null -eq $ToolOverrides[$key]) {
+            [void]$tool.Remove($key)
+        }
+        else {
+            $tool[$key] = $ToolOverrides[$key]
+        }
+    }
+
+    return [pscustomobject]$tool
+}
+
+function New-SuccessProcessResult {
+    param([string]$StdOut = '{}')
+
+    return [pscustomobject]@{
+        Succeeded = $true
+        ExitCode = 0
+        TimedOut = $false
+        StdOut = $StdOut
+        StdErr = ''
+    }
+}
+
+function New-FailedProcessResult {
+    param([string]$StdErr = 'failed')
+
+    return [pscustomobject]@{
+        Succeeded = $false
+        ExitCode = 1
+        TimedOut = $false
+        StdOut = ''
+        StdErr = $StdErr
+    }
+}
+
+Describe 'Get-PluginInstallPlan' {
+    BeforeAll {
+        . $pluginLibrary
+    }
+
+    It 'builds marketplace and plugin commands with fixed ref and exact selector' {
+        $plan = Get-PluginInstallPlan -Tool (New-TestPluginTool)
+
+        $plan.Status | Should Be 'planned'
+        $plan.PluginSelector | Should Be 'openai-browser'
+        $plan.MarketplaceName | Should Be 'openai-primary'
+        $plan.MarketplaceCommand.FilePath | Should Be 'codex'
+        ($plan.MarketplaceCommand.Arguments -join '|') |
+            Should Be 'plugin|marketplace|add|https://github.com/openai/codex-plugins|--ref|v1.2.3|--json'
+        ($plan.PluginCommand.Arguments -join '|') |
+            Should Be 'plugin|add|openai-browser@openai-primary|--json'
+        $plan.MarketplaceCommand.Arguments.GetType().IsArray | Should Be $true
+        $plan.PluginCommand.Arguments.GetType().IsArray | Should Be $true
+    }
+
+    It 'derives a safe selector from id when selector fields are absent' {
+        $plan = Get-PluginInstallPlan -Tool (
+            New-TestPluginTool -SnapshotOverrides @{
+                plugin_id = $null
+                plugin_selector = $null
+            }
+        )
+
+        $plan.Status | Should Be 'planned'
+        $plan.PluginSelector | Should Be 'openai-browser'
+        ($plan.PluginCommand.Arguments -join '|') |
+            Should Be 'plugin|add|openai-browser@openai-primary|--json'
+    }
+
+    It 'rejects unsafe selector characters instead of quoting them into commands' {
+        $plan = Get-PluginInstallPlan -Tool (
+            New-TestPluginTool -SnapshotOverrides @{
+                plugin_selector = 'openai-browser;Remove-Item'
+                plugin_id = $null
+            }
+        )
+
+        $plan.Status | Should Be 'failed'
+        $plan.Message | Should Match 'validation|selector|safe'
+        $plan.PluginCommand | Should Be $null
+    }
+
+    It 'fails validation when whitelist snapshot fields are incomplete' {
+        $plan = Get-PluginInstallPlan -Tool (
+            New-TestPluginTool -SnapshotOverrides @{ sha256 = $null }
+        )
+
+        $plan.Status | Should Be 'failed'
+        $plan.Message | Should Match 'validation'
+        ($plan.Errors -join '|') | Should Match 'sha256'
+    }
+}
+
+Describe 'Install-ManagedPlugin' {
+    BeforeAll {
+        . $pluginLibrary
+    }
+
+    It 'returns blocked plan_only when no executor is provided' {
+        $result = Install-ManagedPlugin -Plan (
+            Get-PluginInstallPlan -Tool (New-TestPluginTool)
+        )
+
+        $result.Status | Should Be 'blocked'
+        $result.Data.PlanOnly | Should Be $true
+        $result.Message | Should Match 'Executor'
+    }
+
+    It 'runs marketplace add before plugin add' {
+        $script:calls = @()
+        $plan = Get-PluginInstallPlan -Tool (New-TestPluginTool)
+
+        $result = Install-ManagedPlugin -Plan $plan -Executor {
+            param($Command)
+            $script:calls += ,$Command
+            New-SuccessProcessResult
+        }
+
+        $result.Status | Should Be 'succeeded'
+        $script:calls.Count | Should Be 2
+        ($script:calls[0].Arguments -join '|') |
+            Should Be 'plugin|marketplace|add|https://github.com/openai/codex-plugins|--ref|v1.2.3|--json'
+        ($script:calls[1].Arguments -join '|') |
+            Should Be 'plugin|add|openai-browser@openai-primary|--json'
+    }
+
+    It 'short-circuits plugin add when marketplace add fails' {
+        $script:calls = @()
+        $plan = Get-PluginInstallPlan -Tool (New-TestPluginTool)
+
+        $result = Install-ManagedPlugin -Plan $plan -Executor {
+            param($Command)
+            $script:calls += ,$Command
+            New-FailedProcessResult -StdErr 'marketplace failed'
+        }
+
+        $result.Status | Should Be 'failed'
+        $script:calls.Count | Should Be 1
+        $result.Message | Should Match 'marketplace failed'
+    }
+
+    It 'records journal external change intent without executable rollback shell' {
+        $script:journalEntries = @()
+        $journal = [pscustomobject]@{
+            AddExternalChange = {
+                param($Entry)
+                $script:journalEntries += ,$Entry
+            }
+        }
+        $plan = Get-PluginInstallPlan -Tool (New-TestPluginTool)
+
+        $result = Install-ManagedPlugin -Plan $plan -Journal $journal -Executor {
+            param($Command)
+            New-SuccessProcessResult
+        }
+
+        $result.Status | Should Be 'succeeded'
+        $script:journalEntries.Count | Should Be 1
+        $script:journalEntries[0].Type | Should Be 'ExternalChange'
+        $script:journalEntries[0].RollbackCommand | Should Be ''
+        $script:journalEntries[0].Description | Should Match 'openai-browser@openai-primary'
+    }
+
+    It 'redacts sensitive stderr values in failed results' {
+        $plan = Get-PluginInstallPlan -Tool (New-TestPluginTool)
+
+        $result = Install-ManagedPlugin -Plan $plan -Executor {
+            param($Command)
+            New-FailedProcessResult -StdErr 'bad SECRET-TOKEN'
+        }
+
+        $result.Status | Should Be 'failed'
+        $result.Message | Should Match '\[REDACTED\]'
+        $result.Message | Should Not Match 'SECRET-TOKEN'
+    }
+}
+
+Describe 'Uninstall-ManagedPlugin' {
+    BeforeAll {
+        . $pluginLibrary
+    }
+
+    It 'generates and executes plugin remove command' {
+        $script:calls = @()
+        $plan = Get-PluginInstallPlan -Tool (New-TestPluginTool)
+
+        $result = Uninstall-ManagedPlugin -Plan $plan -Executor {
+            param($Command)
+            $script:calls += ,$Command
+            New-SuccessProcessResult
+        }
+
+        $result.Status | Should Be 'succeeded'
+        $script:calls.Count | Should Be 1
+        $script:calls[0].FilePath | Should Be 'codex'
+        ($script:calls[0].Arguments -join '|') |
+            Should Be 'plugin|remove|openai-browser@openai-primary'
+    }
+}
+
+Describe 'Test-ManagedPlugin' {
+    BeforeAll {
+        . $pluginLibrary
+    }
+
+    It 'returns blocked when no executor or verifier is provided' {
+        $result = Test-ManagedPlugin -Plan (
+            Get-PluginInstallPlan -Tool (New-TestPluginTool)
+        )
+
+        $result.Status | Should Be 'blocked'
+        $result.Message | Should Match 'Executor|Verifier'
+    }
+
+    It 'finds selector in JSON plugin list output' {
+        $plan = Get-PluginInstallPlan -Tool (New-TestPluginTool)
+        $json = @(
+            [pscustomobject]@{
+                plugin = 'openai-browser'
+                marketplace = 'openai-primary'
+            }
+        ) | ConvertTo-Json -Compress
+
+        $result = Test-ManagedPlugin -Plan $plan -Executor {
+            param($Command)
+            ($Command.Arguments -join '|') |
+                Should Be 'plugin|list|--json'
+            New-SuccessProcessResult -StdOut $json
+        }
+
+        $result.Status | Should Be 'load_verified'
+        $result.Checks[0] | Should Match 'openai-browser@openai-primary'
+    }
+
+    It 'fails when plugin list output does not contain selector' {
+        $plan = Get-PluginInstallPlan -Tool (New-TestPluginTool)
+
+        $result = Test-ManagedPlugin -Plan $plan -Executor {
+            param($Command)
+            New-SuccessProcessResult -StdOut 'other-plugin@openai-primary'
+        }
+
+        $result.Status | Should Be 'failed'
+        $result.Message | Should Match 'not found'
+    }
+}
