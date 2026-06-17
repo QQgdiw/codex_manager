@@ -247,7 +247,7 @@ Describe 'Get-SkillInstallPlan' {
         }
     }
 
-    It 'allows explicit target_root while keeping target under that root' {
+    It 'rejects explicit target_root instead of allowing arbitrary install roots' {
         $source = New-TestSkillSource
         $targetRoot = Join-Path (Get-TestSkillBasePath) 'approved-targets'
         New-Item -ItemType Directory -Path $targetRoot -Force | Out-Null
@@ -259,9 +259,10 @@ Describe 'Get-SkillInstallPlan' {
                 -SnapshotOverrides @{ target_root = $targetRoot }
         )
 
-        $plan.Status | Should Be 'planned'
-        $plan.TargetRoot | Should Be ([IO.Path]::GetFullPath($targetRoot))
-        $plan.TargetPath | Should Be (Join-Path $plan.TargetRoot 'example-skill')
+        $plan.Status | Should Be 'failed'
+        $plan.Message | Should Match 'target_root|managed workspace'
+        $plan.TargetRoot | Should Be $null
+        $plan.TargetPath | Should Be $null
     }
 
     It 'rejects mismatched source hashes deterministically' {
@@ -385,6 +386,7 @@ Describe 'Test-ManagedSkill' {
         $plan = Get-SkillInstallPlan -Tool (
             New-TestSkillTool -SourcePath $source -Hash (Get-SkillSourceHash -SourcePath $source)
         )
+        [void](Install-ManagedSkill -Plan $plan)
 
         $result = Test-ManagedSkill -Plan $plan -Verifier {
             param($VerifierPlan)
@@ -397,5 +399,26 @@ Describe 'Test-ManagedSkill' {
 
         $result.Status | Should Be 'load_verified'
         $result.Checks[0] | Should Match 'official plugin manifest'
+    }
+
+    It 'fails before verifier delegation when the managed Skill is not installed' {
+        $source = New-TestSkillSource
+        $plan = Get-SkillInstallPlan -Tool (
+            New-TestSkillTool -SourcePath $source -Hash (Get-SkillSourceHash -SourcePath $source)
+        )
+        $script:verifierCalled = $false
+
+        $result = Test-ManagedSkill -Plan $plan -Verifier {
+            $script:verifierCalled = $true
+            [pscustomobject]@{
+                Status = 'load_verified'
+                Message = 'should not be called'
+                Checks = @()
+            }
+        }
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'skill_not_installed'
+        $script:verifierCalled | Should Be $false
     }
 }

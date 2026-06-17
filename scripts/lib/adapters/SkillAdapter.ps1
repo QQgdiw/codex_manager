@@ -458,6 +458,9 @@ function Get-SkillInstallPlan {
             [void]$errors.Add("skill_manifest must be the relative path 'SKILL.md'.")
         }
     }
+    if ($null -ne $targetRootInput) {
+        [void]$errors.Add('target_root is not supported; Skills install target is fixed under managed_workspace_root.')
+    }
 
     $sourceFullPath = $null
     $manifestPath = $null
@@ -531,25 +534,16 @@ function Get-SkillInstallPlan {
         if ($null -ne $targetSubdir -and [IO.Path]::IsPathRooted($targetSubdir)) {
             [void]$errors.Add('target_subdir must be relative.')
         }
-        elseif ($null -ne $targetRootInput) {
-            $targetRoot = [IO.Path]::GetFullPath($targetRootInput)
-            $subdir = if ($null -eq $targetSubdir) { $skillId } else { $targetSubdir }
-            $targetPath = [IO.Path]::GetFullPath((Join-Path $targetRoot $subdir))
-            if (-not (Test-SkillAdapterPathWithinRoot -Path $targetPath -Root $targetRoot)) {
-                [void]$errors.Add('target_subdir must stay within target_root.')
-                $targetPath = $null
-            }
-        }
         else {
-            $targetRoot = $workspaceFullPath
-            $subdir = if ($null -eq $targetSubdir) {
-                Join-Path 'Skills' $skillId
-            }
-            else {
-                $targetSubdir
-            }
-            $targetPath = [IO.Path]::GetFullPath((Join-Path $targetRoot $subdir))
             $allowedSkillsRoot = [IO.Path]::GetFullPath((Join-Path $workspaceFullPath 'Skills'))
+            if ($null -ne $targetSubdir) {
+                $targetSubdirPath = [IO.Path]::GetFullPath((Join-Path $workspaceFullPath $targetSubdir))
+                if (-not (Test-SkillAdapterPathWithinRoot -Path $targetSubdirPath -Root $allowedSkillsRoot)) {
+                    [void]$errors.Add('target_subdir must stay within the managed workspace Skills directory.')
+                }
+            }
+            $targetRoot = $allowedSkillsRoot
+            $targetPath = [IO.Path]::GetFullPath((Join-Path $targetRoot $skillId))
             if (-not (Test-SkillAdapterPathWithinRoot -Path $targetPath -Root $allowedSkillsRoot)) {
                 [void]$errors.Add('target must stay within the managed workspace Skills directory.')
                 $targetPath = $null
@@ -829,15 +823,27 @@ function Test-ManagedSkill {
             -Message $Plan.Message `
             -ErrorCode 'validation_failed'
     }
-    if ($null -ne $Verifier) {
-        return & $Verifier $Plan
-    }
-    if (-not (Test-Path -LiteralPath $Plan.TargetPath -PathType Container)) {
+
+    $managedSkillsRoot = [IO.Path]::GetFullPath((Join-Path $Plan.ManagedWorkspaceRoot 'Skills'))
+    $managedSkillRoot = [IO.Path]::GetFullPath((Join-Path $managedSkillsRoot $Plan.SkillId))
+    $plannedTargetPath = [IO.Path]::GetFullPath($Plan.TargetPath)
+    $plannedManifestPath = [IO.Path]::GetFullPath((Join-Path $plannedTargetPath 'SKILL.md'))
+    $isManagedTarget = (
+        [string]::Equals($plannedTargetPath, $managedSkillRoot, [StringComparison]::OrdinalIgnoreCase) -and
+        (Test-SkillAdapterPathWithinRoot -Path $plannedManifestPath -Root $managedSkillRoot)
+    )
+
+    if (-not $isManagedTarget -or
+        -not (Test-Path -LiteralPath $plannedTargetPath -PathType Container) -or
+        -not (Test-Path -LiteralPath $plannedManifestPath -PathType Leaf)) {
         return New-SkillVerificationResult -Plan $Plan `
             -Status 'failed' `
-            -Message "Managed Skill '$($Plan.SkillId)' directory is not installed." `
-            -Checks @('managed skill target directory exists') `
+            -Message "Managed Skill '$($Plan.SkillId)' is not installed in the managed workspace Skills directory." `
+            -Checks @('managed skill target directory and SKILL.md exist') `
             -ErrorCode 'skill_not_installed'
+    }
+    if ($null -ne $Verifier) {
+        return & $Verifier $Plan
     }
 
     return New-SkillVerificationResult -Plan $Plan `
