@@ -163,6 +163,63 @@ function ConvertTo-SkillAdapterHex {
     return ([BitConverter]::ToString($Bytes) -replace '-', '').ToLowerInvariant()
 }
 
+function Test-SkillAdapterReparsePoint {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Item
+    )
+
+    return (($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+}
+
+function Assert-SkillAdapterPathIsNotReparsePoint {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Label
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (Test-SkillAdapterReparsePoint -Item $item) {
+        throw "$Label must not be a reparse point, symbolic link, or junction."
+    }
+}
+
+function Assert-SkillAdapterTreeHasNoReparsePoint {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Label
+    )
+
+    Assert-SkillAdapterPathIsNotReparsePoint -Path $Path -Label $Label
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        return
+    }
+
+    $pending = New-Object System.Collections.Generic.Stack[string]
+    $pending.Push([IO.Path]::GetFullPath($Path))
+    while ($pending.Count -gt 0) {
+        $current = $pending.Pop()
+        foreach ($item in @(Get-ChildItem -LiteralPath $current -Force -ErrorAction Stop)) {
+            if (Test-SkillAdapterReparsePoint -Item $item) {
+                throw "$Label must not contain reparse points, symbolic links, or junctions."
+            }
+            if ($item.PSIsContainer) {
+                $pending.Push($item.FullName)
+            }
+        }
+    }
+}
+
 function Get-SkillSourceHash {
     [CmdletBinding()]
     param(
@@ -174,6 +231,7 @@ function Get-SkillSourceHash {
     if (-not (Test-Path -LiteralPath $sourceFullPath -PathType Container)) {
         throw 'Skill source_path must be an existing directory.'
     }
+    Assert-SkillAdapterTreeHasNoReparsePoint -Path $sourceFullPath -Label 'Skill source_path tree'
 
     $sha = [Security.Cryptography.SHA256]::Create()
     try {
@@ -472,6 +530,16 @@ function Get-SkillInstallPlan {
             [void]$errors.Add('source_path must be an existing directory.')
         }
         else {
+            try {
+                Assert-SkillAdapterTreeHasNoReparsePoint `
+                    -Path $sourceFullPath `
+                    -Label 'Skill source_path tree'
+            }
+            catch {
+                [void]$errors.Add($_.Exception.Message)
+            }
+        }
+        if ($errors.Count -eq 0) {
             $manifestPath = [IO.Path]::GetFullPath((Join-Path $sourceFullPath $skillManifest))
             if (-not (Test-SkillAdapterPathWithinRoot -Path $manifestPath -Root $sourceFullPath)) {
                 [void]$errors.Add('skill_manifest must stay within source_path.')
@@ -611,7 +679,70 @@ function Get-SkillResultRedactions {
         $Plan.TargetRoot
         $Plan.TargetPath
         $Plan.ManagedWorkspaceRoot
+        'auth.json'
+        'raw exception'
     ) | Where-Object { -not [string]::IsNullOrEmpty([string]$_) } | ForEach-Object { [string]$_ }
+}
+
+function Get-SkillVerifierResultValue {
+    param(
+        [AllowNull()]
+        [object]$Result,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Names,
+
+        [AllowNull()]
+        [object]$DefaultValue = $null
+    )
+
+    if ($null -eq $Result) {
+        return $DefaultValue
+    }
+
+    foreach ($name in $Names) {
+        $property = $Result.PSObject.Properties[$name]
+        if ($null -ne $property) {
+            return $property.Value
+        }
+    }
+
+    return $DefaultValue
+}
+
+function ConvertTo-SkillVerificationResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Plan,
+
+        [AllowNull()]
+        [object]$VerifierResult
+    )
+
+    $status = [string](Get-SkillVerifierResultValue `
+            -Result $VerifierResult `
+            -Names @('Status', 'status') `
+            -DefaultValue 'failed')
+    $message = [string](Get-SkillVerifierResultValue `
+            -Result $VerifierResult `
+            -Names @('Message', 'message') `
+            -DefaultValue 'Verifier did not return a message.')
+    $checks = @(Get-SkillAdapterArray -Value (
+            Get-SkillVerifierResultValue `
+                -Result $VerifierResult `
+                -Names @('Checks', 'checks') `
+                -DefaultValue @()
+        ))
+    $errorCode = Get-SkillVerifierResultValue `
+        -Result $VerifierResult `
+        -Names @('ErrorCode', 'error_code', 'errorCode') `
+        -DefaultValue $null
+
+    return New-SkillVerificationResult -Plan $Plan `
+        -Status $status `
+        -Message $message `
+        -Checks $checks `
+        -ErrorCode $errorCode
 }
 
 function Add-SkillJournalIntent {
@@ -678,6 +809,12 @@ function Install-ManagedSkill {
         if (-not (Test-SkillAdapterPathWithinRoot -Path $Plan.TargetPath -Root $Plan.TargetRoot)) {
             throw 'Planned target path is outside the approved target root.'
         }
+        Assert-SkillAdapterPathIsNotReparsePoint `
+            -Path $Plan.TargetRoot `
+            -Label 'Managed workspace Skills directory'
+        Assert-SkillAdapterTreeHasNoReparsePoint `
+            -Path $Plan.TargetPath `
+            -Label 'Managed Skill target directory'
 
         Add-SkillJournalIntent -Plan $Plan -Journal $Journal
         $parent = Split-Path -Parent $Plan.TargetPath
@@ -706,10 +843,14 @@ function Install-ManagedSkill {
             })
     }
     catch {
-        $message = Protect-SkillAdapterText -Text $_.Exception.Message `
-            -SensitiveValues $redactions
+        $failureMessage = 'Managed Skill install failed.'
+        if ($_.Exception.Message -match 'reparse point|symbolic link|junction') {
+            $reason = Protect-SkillAdapterText -Text $_.Exception.Message `
+                -SensitiveValues $redactions
+            $failureMessage = "Managed Skill install failed: $reason"
+        }
         return New-OperationResult -Status 'failed' `
-            -Message "Managed Skill install failed: $message" `
+            -Message $failureMessage `
             -Data ([pscustomobject][ordered]@{
                 SkillId = $Plan.SkillId
                 Installed = $false
@@ -738,6 +879,12 @@ function Uninstall-ManagedSkill {
         if (-not (Test-SkillAdapterPathWithinRoot -Path $Plan.TargetPath -Root $Plan.TargetRoot)) {
             throw 'Planned target path is outside the approved target root.'
         }
+        Assert-SkillAdapterPathIsNotReparsePoint `
+            -Path $Plan.TargetRoot `
+            -Label 'Managed workspace Skills directory'
+        Assert-SkillAdapterTreeHasNoReparsePoint `
+            -Path $Plan.TargetPath `
+            -Label 'Managed Skill target directory'
         if (Test-Path -LiteralPath $Plan.TargetPath) {
             Remove-Item -LiteralPath $Plan.TargetPath -Recurse -Force -ErrorAction Stop
         }
@@ -781,15 +928,28 @@ function New-SkillVerificationResult {
         [object]$ErrorCode = $null
     )
 
+    $redactions = @(Get-SkillResultRedactions -Plan $Plan)
+    $safeMessage = Protect-SkillAdapterText -Text $Message -SensitiveValues $redactions
+    $safeChecks = @()
+    foreach ($check in @(Get-SkillAdapterArray -Value $Checks)) {
+        $safeChecks += Protect-SkillAdapterText -Text ([string]$check) `
+            -SensitiveValues $redactions
+    }
+    $safeErrorCode = $ErrorCode
+    if ($null -ne $safeErrorCode) {
+        $safeErrorCode = Protect-SkillAdapterText -Text ([string]$safeErrorCode) `
+            -SensitiveValues $redactions
+    }
+
     if (Get-Command New-VerificationResult -ErrorAction SilentlyContinue) {
         return New-VerificationResult -Tool $Plan.ApprovedSnapshot `
             -Level 'load' `
             -Status $Status `
-            -Message $Message `
+            -Message $safeMessage `
             -StartedAt ([DateTime]::UtcNow) `
-            -Checks $Checks `
-            -SensitiveRedactions (Get-SkillResultRedactions -Plan $Plan) `
-            -ErrorCode $ErrorCode
+            -Checks $safeChecks `
+            -SensitiveRedactions @() `
+            -ErrorCode $safeErrorCode
     }
 
     return [pscustomobject][ordered]@{
@@ -800,10 +960,9 @@ function New-SkillVerificationResult {
         Source = $Plan.Source
         Level = 'load'
         Status = $Status
-        Message = Protect-SkillAdapterText -Text $Message `
-            -SensitiveValues (Get-SkillResultRedactions -Plan $Plan)
-        Checks = @($Checks)
-        ErrorCode = $ErrorCode
+        Message = $safeMessage
+        Checks = @($safeChecks)
+        ErrorCode = $safeErrorCode
     }
 }
 
@@ -833,6 +992,22 @@ function Test-ManagedSkill {
         (Test-SkillAdapterPathWithinRoot -Path $plannedManifestPath -Root $managedSkillRoot)
     )
 
+    try {
+        Assert-SkillAdapterPathIsNotReparsePoint `
+            -Path $managedSkillsRoot `
+            -Label 'Managed workspace Skills directory'
+        Assert-SkillAdapterTreeHasNoReparsePoint `
+            -Path $plannedTargetPath `
+            -Label 'Managed Skill target directory'
+    }
+    catch {
+        return New-SkillVerificationResult -Plan $Plan `
+            -Status 'failed' `
+            -Message $_.Exception.Message `
+            -Checks @('managed workspace Skills and target directories are not reparse points') `
+            -ErrorCode 'reparse_point_rejected'
+    }
+
     if (-not $isManagedTarget -or
         -not (Test-Path -LiteralPath $plannedTargetPath -PathType Container) -or
         -not (Test-Path -LiteralPath $plannedManifestPath -PathType Leaf)) {
@@ -842,8 +1017,42 @@ function Test-ManagedSkill {
             -Checks @('managed skill target directory and SKILL.md exist') `
             -ErrorCode 'skill_not_installed'
     }
+
+    try {
+        $installedHash = Get-SkillSourceHash -SourcePath $plannedTargetPath
+    }
+    catch {
+        return New-SkillVerificationResult -Plan $Plan `
+            -Status 'failed' `
+            -Message 'Managed Skill installed content hash could not be computed.' `
+            -Checks @('installed managed skill source hash matches approved snapshot') `
+            -ErrorCode 'skill_hash_unavailable'
+    }
+
+    if (-not [string]::Equals(
+            [string]$installedHash,
+            [string]$Plan.SourceHash,
+            [StringComparison]::OrdinalIgnoreCase)) {
+        return New-SkillVerificationResult -Plan $Plan `
+            -Status 'failed' `
+            -Message 'Managed Skill installed content hash does not match the approved snapshot.' `
+            -Checks @('installed managed skill source hash matches approved snapshot') `
+            -ErrorCode 'skill_hash_mismatch'
+    }
+
     if ($null -ne $Verifier) {
-        return & $Verifier $Plan
+        try {
+            $verifierResult = & $Verifier $Plan
+            return ConvertTo-SkillVerificationResult -Plan $Plan `
+                -VerifierResult $verifierResult
+        }
+        catch {
+            return New-SkillVerificationResult -Plan $Plan `
+                -Status 'failed' `
+                -Message 'Managed Skill verifier failed.' `
+                -Checks @('official verifier completed without throwing') `
+                -ErrorCode 'verifier_failed'
+        }
     }
 
     return New-SkillVerificationResult -Plan $Plan `

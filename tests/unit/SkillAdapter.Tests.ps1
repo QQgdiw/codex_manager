@@ -137,6 +137,32 @@ function Assert-SkillPlanDoesNotLeak {
     }
 }
 
+function Test-SkillAdapterJunctionAvailable {
+    $probeRoot = Join-Path ([IO.Path]::GetTempPath()) (
+        'skill-adapter-junction-probe-' + [Guid]::NewGuid().ToString('N')
+    )
+    $target = $probeRoot + '-target'
+    try {
+        New-Item -ItemType Directory -Path $target -Force | Out-Null
+        New-Item -ItemType Junction -Path $probeRoot -Target $target `
+            -ErrorAction Stop | Out-Null
+        return $true
+    }
+    catch {
+        return $false
+    }
+    finally {
+        if (Test-Path -LiteralPath $probeRoot) {
+            [IO.Directory]::Delete($probeRoot)
+        }
+        if (Test-Path -LiteralPath $target) {
+            Remove-Item -LiteralPath $target -Recurse -Force
+        }
+    }
+}
+
+$script:skillAdapterJunctionAvailable = Test-SkillAdapterJunctionAvailable
+
 Describe 'Get-SkillInstallPlan' {
     BeforeAll {
         . $skillLibrary
@@ -275,6 +301,22 @@ Describe 'Get-SkillInstallPlan' {
         $plan.Message | Should Match 'sha256|hash'
     }
 
+    It 'rejects a source_path tree containing a reparse point' `
+        -Skip:(-not $script:skillAdapterJunctionAvailable) {
+        $source = New-TestSkillSource
+        $outside = Join-Path (Get-TestSkillBasePath) 'outside-reparse-target'
+        New-Item -ItemType Directory -Path $outside -Force | Out-Null
+        New-Item -ItemType Junction -Path (Join-Path $source 'docs\linked') `
+            -Target $outside | Out-Null
+
+        $plan = Get-SkillInstallPlan -Tool (
+            New-TestSkillTool -SourcePath $source -Hash ('0' * 64)
+        )
+
+        $plan.Status | Should Be 'failed'
+        (@($plan.Errors) -join '|') | Should Match 'reparse|symbolic|junction'
+    }
+
     It 'does not use top-level fields when approved snapshot omits required fields' {
         $source = New-TestSkillSource
         $plan = Get-SkillInstallPlan -Tool (
@@ -323,23 +365,50 @@ Describe 'Install-ManagedSkill' {
     }
 
     It 'returns a redacted failed result without raw exception details' {
-        $source = New-TestSkillSource
-        $blockedTargetRoot = Join-Path (Get-TestSkillBasePath) 'SECRET-SKILL-TOKEN'
-        Set-Content -LiteralPath $blockedTargetRoot -Value 'file blocks directory' -Encoding ASCII
+        $source = New-TestSkillSource -SkillId 'copy-failure'
         $plan = Get-SkillInstallPlan -Tool (
             New-TestSkillTool `
                 -SourcePath $source `
-                -Hash (Get-SkillSourceHash -SourcePath $source) `
-                -SnapshotOverrides @{ target_root = $blockedTargetRoot }
+                -Hash (Get-SkillSourceHash -SourcePath $source)
         )
+        Mock -CommandName Copy-Item -MockWith {
+            throw 'copy failed with SECRET-SKILL-TOKEN auth.json raw exception'
+        } -ParameterFilter {
+            [string]$LiteralPath -like "$source*"
+        }
 
         $result = Install-ManagedSkill -Plan $plan
         $json = $result.Data | ConvertTo-Json -Depth 8 -Compress
 
         $result.Status | Should Be 'failed'
         $result.Message | Should Not Match 'SECRET-SKILL-TOKEN'
+        $result.Message | Should Not Match 'auth\.json'
+        $result.Message | Should Not Match 'raw exception'
         $json | Should Not Match 'SECRET-SKILL-TOKEN'
         ($result.Data.PSObject.Properties.Name -join '|') | Should Not Match '(^|\|)Exception($|\|)'
+        ($result.Data.PSObject.Properties.Name -join '|') | Should Not Match 'Raw|Stack|Message'
+    }
+
+    It 'rejects managed Skills reparse points before install' `
+        -Skip:(-not $script:skillAdapterJunctionAvailable) {
+        $source = New-TestSkillSource
+        $workspace = Join-Path (Get-TestSkillBasePath) 'workspace-reparse-install'
+        New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+        $skillsTarget = Join-Path (Get-TestSkillBasePath) 'outside-skills'
+        New-Item -ItemType Directory -Path $skillsTarget -Force | Out-Null
+        New-Item -ItemType Junction -Path (Join-Path $workspace 'Skills') `
+            -Target $skillsTarget | Out-Null
+        $plan = Get-SkillInstallPlan -Tool (
+            New-TestSkillTool `
+                -SourcePath $source `
+                -WorkspaceRoot $workspace `
+                -Hash (Get-SkillSourceHash -SourcePath $source)
+        )
+
+        $result = Install-ManagedSkill -Plan $plan
+
+        $result.Status | Should Be 'failed'
+        $result.Message | Should Match 'reparse|symbolic|junction'
     }
 }
 
@@ -399,6 +468,95 @@ Describe 'Test-ManagedSkill' {
 
         $result.Status | Should Be 'load_verified'
         $result.Checks[0] | Should Match 'official plugin manifest'
+    }
+
+    It 'fails before verifier delegation when installed content hash changed' {
+        $source = New-TestSkillSource
+        $plan = Get-SkillInstallPlan -Tool (
+            New-TestSkillTool -SourcePath $source -Hash (Get-SkillSourceHash -SourcePath $source)
+        )
+        [void](Install-ManagedSkill -Plan $plan)
+        Set-Content -LiteralPath (Join-Path $plan.TargetPath 'docs\usage.md') `
+            -Value 'tampered installed content' `
+            -Encoding ASCII
+        $script:verifierCalled = $false
+
+        $result = Test-ManagedSkill -Plan $plan -Verifier {
+            $script:verifierCalled = $true
+            [pscustomobject]@{ Status = 'load_verified'; Message = 'should not run'; Checks = @() }
+        }
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'skill_hash_mismatch'
+        $script:verifierCalled | Should Be $false
+    }
+
+    It 'normalizes and redacts verifier results' {
+        $source = New-TestSkillSource
+        $plan = Get-SkillInstallPlan -Tool (
+            New-TestSkillTool -SourcePath $source -Hash (Get-SkillSourceHash -SourcePath $source)
+        )
+        [void](Install-ManagedSkill -Plan $plan)
+
+        $result = Test-ManagedSkill -Plan $plan -Verifier {
+            [pscustomobject]@{
+                Status = 'failed'
+                Message = 'verifier saw SECRET-SKILL-TOKEN in auth.json'
+                Checks = @('checked SECRET-SKILL-TOKEN')
+                ErrorCode = 'official_failed'
+                ExtraSecret = 'SECRET-SKILL-TOKEN'
+            }
+        }
+        $json = $result | ConvertTo-Json -Depth 8 -Compress
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'official_failed'
+        $result.Message | Should Not Match 'SECRET-SKILL-TOKEN'
+        $result.Message | Should Not Match 'auth\.json'
+        $json | Should Not Match 'SECRET-SKILL-TOKEN'
+        ($result.PSObject.Properties.Name -join '|') | Should Not Match 'ExtraSecret'
+    }
+
+    It 'returns a redacted failed verification result when verifier throws' {
+        $source = New-TestSkillSource
+        $plan = Get-SkillInstallPlan -Tool (
+            New-TestSkillTool -SourcePath $source -Hash (Get-SkillSourceHash -SourcePath $source)
+        )
+        [void](Install-ManagedSkill -Plan $plan)
+
+        $result = Test-ManagedSkill -Plan $plan -Verifier {
+            throw 'raw exception includes SECRET-SKILL-TOKEN and auth.json content'
+        }
+        $json = $result | ConvertTo-Json -Depth 8 -Compress
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'verifier_failed'
+        $json | Should Not Match 'SECRET-SKILL-TOKEN'
+        $json | Should Not Match 'auth\.json'
+        $json | Should Not Match 'raw exception'
+    }
+
+    It 'rejects target reparse points before verifier delegation' `
+        -Skip:(-not $script:skillAdapterJunctionAvailable) {
+        $source = New-TestSkillSource
+        $plan = Get-SkillInstallPlan -Tool (
+            New-TestSkillTool -SourcePath $source -Hash (Get-SkillSourceHash -SourcePath $source)
+        )
+        [void](Install-ManagedSkill -Plan $plan)
+        Remove-Item -LiteralPath $plan.TargetPath -Recurse -Force
+        $outside = Join-Path (Get-TestSkillBasePath) 'outside-verify-target'
+        Copy-Item -LiteralPath $source -Destination $outside -Recurse
+        New-Item -ItemType Junction -Path $plan.TargetPath -Target $outside | Out-Null
+        $script:verifierCalled = $false
+
+        $result = Test-ManagedSkill -Plan $plan -Verifier {
+            $script:verifierCalled = $true
+            [pscustomobject]@{ Status = 'load_verified'; Message = 'should not run'; Checks = @() }
+        }
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'reparse_point_rejected'
+        $script:verifierCalled | Should Be $false
     }
 
     It 'fails before verifier delegation when the managed Skill is not installed' {
