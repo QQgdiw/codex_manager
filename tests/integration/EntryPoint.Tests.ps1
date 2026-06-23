@@ -181,6 +181,20 @@ Describe 'Codex tool manager entry point' {
         $body.Message | Should Match 'not found|exist|path|Config'
     }
 
+    It 'returns fatal exit code two for unknown parameters' {
+        $fixture = New-EntryPointFixture -Root (Join-Path $TestDrive 'unknown-parameter')
+
+        $run = Invoke-EntryPointProcess -Arguments @(
+            'plan', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist,
+            '-DryRnu'
+        )
+
+        $run.ExitCode | Should Be 2
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Status | Should Be 'fatal'
+        $body.Message | Should Match 'Unsupported parameter|DryRnu'
+    }
+
     It 'deploy dry-run reports planned work and leaves the target absent' {
         $fixture = New-EntryPointFixture -Root (Join-Path $TestDrive 'dryrun')
 
@@ -278,6 +292,36 @@ Describe 'Codex tool manager entry point' {
             Should Be 1
     }
 
+    It 'rejects credential value parameters without values' {
+        $storePath = Join-Path $TestDrive 'credentials-missing-value\store.dpapi'
+
+        $run = Invoke-EntryPointProcess -Arguments @(
+            'credential', 'set', '-Name', 'api-token', '-Value', 'secret-value',
+            '-StorePath'
+        )
+
+        $run.ExitCode | Should Be 2
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Status | Should Be 'fatal'
+        $body.Message | Should Match 'StorePath|value'
+        (Test-Path -LiteralPath $storePath) | Should Be $false
+    }
+
+    It 'rejects extra credential positional arguments' {
+        $storePath = Join-Path $TestDrive 'credentials-extra\store.dpapi'
+
+        $run = Invoke-EntryPointProcess -Arguments @(
+            'credential', 'set', 'extra', '-Name', 'api-token',
+            '-Value', 'secret-value', '-StorePath', $storePath
+        )
+
+        $run.ExitCode | Should Be 2
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Status | Should Be 'fatal'
+        $body.Message | Should Match 'credential|positional|extra'
+        (Test-Path -LiteralPath $storePath) | Should Be $false
+    }
+
     It 'rollback invokes the change journal rollback path' {
         . $journalLibrary
         $root = Join-Path $TestDrive 'rollback'
@@ -307,6 +351,33 @@ Describe 'Codex tool manager entry point' {
         (Test-Path -LiteralPath $path) | Should Be $false
     }
 
+    It 'reports rollback partial results as business failure' {
+        . $journalLibrary
+        $root = Join-Path $TestDrive 'rollback-partial'
+        $stateRoot = Join-Path $root '.state'
+        $codexRoot = Join-Path $root '.codex-test'
+        New-Item -ItemType Directory -Path $root, $codexRoot | Out-Null
+        $journal = New-ChangeJournal `
+            -OperationId 'entrypoint-rollback-partial' `
+            -AllowedRoots @($root) `
+            -CodexRoot $codexRoot `
+            -StateRoot $stateRoot
+        Add-ExternalChange -Journal $journal `
+            -Description 'external tool change remains manual' `
+            -RollbackCommand '' `
+            -AllowedRoots @($root) | Out-Null
+
+        $run = Invoke-EntryPointProcess -Arguments @(
+            'rollback', '-JournalPath', $journal.JournalPath, '-AllowedRoot', $root
+        )
+
+        $run.ExitCode | Should Be 1
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Status | Should Be 'blocked'
+        $body.Rollback.Status | Should Be 'Partial'
+        @($body.Rollback.Residuals).Count | Should Be 1
+    }
+
     It 'status reports local inputs without network access' {
         $fixture = New-EntryPointFixture -Root (Join-Path $TestDrive 'status')
 
@@ -320,6 +391,6 @@ Describe 'Codex tool manager entry point' {
         $body.Status | Should Be 'succeeded'
         $body.ConfigExists | Should Be $true
         $body.WhitelistExists | Should Be $true
-        @($body.AdapterTypes) | Should Be @('plugin', 'mcp', 'skill')
+        (@($body.AdapterTypes) -join '|') | Should Be 'plugin|mcp|skill'
     }
 }

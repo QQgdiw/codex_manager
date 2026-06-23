@@ -64,7 +64,10 @@ function Get-ManagerArgument {
         [switch]$Mandatory
     )
 
-    if ($Map.ContainsKey($Name) -and $Map[$Name] -ne $true) {
+    if ($Map.ContainsKey($Name) -and $Map[$Name] -eq $true) {
+        throw "Parameter -$Name requires a value."
+    }
+    if ($Map.ContainsKey($Name)) {
         return [string]$Map[$Name]
     }
     if ($Mandatory) {
@@ -89,6 +92,37 @@ function Test-ManagerSwitch {
         }
     }
     return $false
+}
+
+function Assert-ManagerAllowedArguments {
+    param(
+        [System.Collections.IDictionary]$Map,
+        [string[]]$AllowedNames = @(),
+        [int]$RequiredPositionals = 0,
+        [int]$MaximumPositionals = 0
+    )
+
+    $allowed = @{}
+    foreach ($name in @($AllowedNames)) {
+        $allowed[$name] = $true
+    }
+
+    foreach ($key in @($Map.Keys)) {
+        if ($key -eq '__positionals') {
+            continue
+        }
+        if (-not $allowed.ContainsKey($key)) {
+            throw "Unsupported parameter -$key."
+        }
+    }
+
+    $positionals = @($Map['__positionals'])
+    if ($positionals.Count -lt $RequiredPositionals) {
+        throw "Expected at least $RequiredPositionals positional argument(s)."
+    }
+    if ($positionals.Count -gt $MaximumPositionals) {
+        throw 'Unexpected extra positional argument.'
+    }
 }
 
 function Write-ManagerJson {
@@ -196,6 +230,8 @@ function New-ManagerAdapterMap {
 function Invoke-ManagerPlan {
     param([System.Collections.IDictionary]$Map)
 
+    Assert-ManagerAllowedArguments -Map $Map `
+        -AllowedNames @('Config', 'Whitelist', 'OutputPath', 'CredentialStorePath', 'StorePath')
     $plan = Read-ManagerPlan -Map $Map
     $status = if (@($plan.Errors).Count -gt 0) { 'blocked' } else { 'succeeded' }
     $exitCode = if ($status -eq 'succeeded') {
@@ -224,6 +260,11 @@ function Invoke-ManagerPlan {
 function Invoke-ManagerDeploy {
     param([System.Collections.IDictionary]$Map)
 
+    Assert-ManagerAllowedArguments -Map $Map `
+        -AllowedNames @(
+            'Config', 'Whitelist', 'PlanPath', 'CredentialStorePath',
+            'StorePath', 'DryRun', 'WhatIf'
+        )
     $plan = Read-ManagerPlan -Map $Map -RequireValidForDeployment
     if (@($plan.Errors).Count -gt 0) {
         return [pscustomobject]@{
@@ -270,6 +311,8 @@ function Invoke-ManagerDeploy {
 function Invoke-ManagerVerify {
     param([System.Collections.IDictionary]$Map)
 
+    Assert-ManagerAllowedArguments -Map $Map `
+        -AllowedNames @('Config', 'Whitelist', 'PlanPath', 'CredentialStorePath', 'StorePath')
     $plan = Read-ManagerPlan -Map $Map
     if (@($plan.Errors).Count -gt 0) {
         return [pscustomobject]@{
@@ -320,6 +363,8 @@ function Invoke-ManagerVerify {
 function Invoke-ManagerRollback {
     param([System.Collections.IDictionary]$Map)
 
+    Assert-ManagerAllowedArguments -Map $Map `
+        -AllowedNames @('JournalPath', 'AllowedRoot', 'AllowedRoots')
     $journalPath = Get-ManagerArgument -Map $Map -Name 'JournalPath' -Mandatory
     $allowedRoots = @()
     if ($Map.ContainsKey('AllowedRoot')) {
@@ -332,7 +377,7 @@ function Invoke-ManagerRollback {
     $rollback = Invoke-JournalRollback `
         -Journal $journal `
         -AllowedRoots $allowedRoots
-    $status = if (@($rollback.Failed).Count -gt 0) { 'blocked' } else { 'succeeded' }
+    $status = if ($rollback.Status -ceq 'Succeeded') { 'succeeded' } else { 'blocked' }
     $exitCode = if ($status -eq 'succeeded') {
         $script:SuccessExitCode
     }
@@ -354,6 +399,10 @@ function Invoke-ManagerRollback {
 function Invoke-ManagerCredential {
     param([System.Collections.IDictionary]$Map)
 
+    Assert-ManagerAllowedArguments -Map $Map `
+        -AllowedNames @('Name', 'Value', 'StorePath') `
+        -RequiredPositionals 1 `
+        -MaximumPositionals 1
     $positionals = @($Map['__positionals'])
     if ($positionals.Count -lt 1) {
         throw 'credential requires an action: set, get, remove, or list.'
@@ -455,6 +504,8 @@ function Invoke-ManagerCredential {
 function Invoke-ManagerStatus {
     param([System.Collections.IDictionary]$Map)
 
+    Assert-ManagerAllowedArguments -Map $Map `
+        -AllowedNames @('Config', 'Whitelist')
     $configPath = Get-ManagerArgument -Map $Map -Name 'Config'
     $whitelistPath = Get-ManagerArgument -Map $Map -Name 'Whitelist'
     return [pscustomobject]@{
