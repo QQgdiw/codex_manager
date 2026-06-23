@@ -33,12 +33,12 @@ Describe 'Test-WhitelistDocument' {
         $null -eq $result.Warnings | Should Be $false
     }
 
-    It 'accepts the empty initial whitelist without inventing approved tools' {
+    It 'accepts the project whitelist without inventing approved tools' {
         $document = Read-ProjectToml -Path (Join-Path $projectRoot 'Resources\tool_whitelist.toml')
         $result = Test-WhitelistDocument -Document $document
 
         $result.IsValid | Should Be $true
-        $document.tools.Count | Should Be 0
+        @($document.tools | Where-Object { $_.approval -eq 'approved' }).Count | Should Be 0
     }
 
     It 'returns all ordinary field errors instead of throwing' {

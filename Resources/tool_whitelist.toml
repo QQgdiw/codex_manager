@@ -1,2 +1,86 @@
 schema_version = "1.0"
-tools = []
+
+[[tools]]
+id = "plugin.openai-bundled.browser"
+name = "Browser"
+type = "plugin"
+source = "https://github.com/openai/openai/tree/master/lib/browser_use/plugin"
+version = "26.609.41114"
+sha256 = "3f6ecece6fb80a42df04df559a711fab6d8f663c92545e86eb1812df316f931a"
+license = "Proprietary"
+approval = "proposed"
+risk = "medium"
+install_target = "Plugins/openai-bundled/browser"
+credential_refs = []
+conflicts = []
+marketplace_name = "openai-bundled"
+plugin_selector = "browser"
+evidence = "local_manifest_sha256"
+
+[[tools]]
+id = "plugin.openai-curated.superpowers"
+name = "Superpowers"
+type = "plugin"
+source = "https://github.com/obra/superpowers"
+version = "5.1.3"
+sha256 = "ce06de063cabc2c41ffce239aeb5cb941fcab0c98dddede927aa06e854d40aed"
+license = "MIT"
+approval = "proposed"
+risk = "medium"
+install_target = "Plugins/openai-curated/superpowers"
+credential_refs = []
+conflicts = []
+marketplace_name = "openai-curated"
+plugin_selector = "superpowers"
+evidence = "local_manifest_sha256"
+
+[[tools]]
+id = "plugin.openai-primary-runtime.documents"
+name = "Documents"
+type = "plugin"
+source = "https://github.com/openai/openai"
+version = "26.601.10930"
+sha256 = "926e1482c6728ee58e6299ecf69ad684843b78ff0388618593a351c97c36829f"
+license = "MIT"
+approval = "proposed"
+risk = "medium"
+install_target = "Plugins/openai-primary-runtime/documents"
+credential_refs = []
+conflicts = []
+marketplace_name = "openai-primary-runtime"
+plugin_selector = "documents"
+evidence = "local_manifest_sha256"
+
+[[tools]]
+id = "plugin.openai-primary-runtime.presentations"
+name = "Presentations"
+type = "plugin"
+source = "https://github.com/openai/openai"
+version = "26.601.10930"
+sha256 = "a1a22dcceee20f9189c03b759b60fe2512efcca357f0c0f6906293800b2001b1"
+license = "MIT"
+approval = "proposed"
+risk = "medium"
+install_target = "Plugins/openai-primary-runtime/presentations"
+credential_refs = []
+conflicts = []
+marketplace_name = "openai-primary-runtime"
+plugin_selector = "presentations"
+evidence = "local_manifest_sha256"
+
+[[tools]]
+id = "plugin.openai-primary-runtime.spreadsheets"
+name = "Spreadsheets"
+type = "plugin"
+source = "https://github.com/openai/openai"
+version = "26.601.10930"
+sha256 = "f86d5ad694b38f05de76eba8c51c9157f21c8645f89f48312890a0152f5fe73b"
+license = "MIT"
+approval = "proposed"
+risk = "medium"
+install_target = "Plugins/openai-primary-runtime/spreadsheets"
+credential_refs = []
+conflicts = []
+marketplace_name = "openai-primary-runtime"
+plugin_selector = "spreadsheets"
+evidence = "local_manifest_sha256"
