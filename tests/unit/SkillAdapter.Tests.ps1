@@ -410,6 +410,35 @@ Describe 'Install-ManagedSkill' {
         $result.Status | Should Be 'failed'
         $result.Message | Should Match 'reparse|symbolic|junction'
     }
+
+    It 'rejects an existing managed Skill target reparse point before install' `
+        -Skip:(-not $script:skillAdapterJunctionAvailable) {
+        $source = New-TestSkillSource
+        $workspace = Join-Path (Get-TestSkillBasePath) 'workspace-target-reparse-install'
+        $outside = Join-Path (Get-TestSkillBasePath) 'outside-target-reparse-install'
+        New-Item -ItemType Directory -Path $workspace, $outside -Force | Out-Null
+        $plan = Get-SkillInstallPlan -Tool (
+            New-TestSkillTool `
+                -SourcePath $source `
+                -WorkspaceRoot $workspace `
+                -Hash (Get-SkillSourceHash -SourcePath $source)
+        )
+        New-Item -ItemType Directory -Path $plan.TargetRoot -Force | Out-Null
+        New-Item -ItemType Junction -Path $plan.TargetPath -Target $outside | Out-Null
+
+        try {
+            $result = Install-ManagedSkill -Plan $plan
+
+            $result.Status | Should Be 'failed'
+            $result.Message | Should Match 'reparse|symbolic|junction'
+            (Test-Path -LiteralPath (Join-Path $outside 'SKILL.md')) | Should Be $false
+        }
+        finally {
+            if (Test-Path -LiteralPath $plan.TargetPath) {
+                [IO.Directory]::Delete($plan.TargetPath)
+            }
+        }
+    }
 }
 
 Describe 'Uninstall-ManagedSkill' {
@@ -428,6 +457,36 @@ Describe 'Uninstall-ManagedSkill' {
 
         $result.Status | Should Be 'succeeded'
         (Test-Path -LiteralPath $plan.TargetPath) | Should Be $false
+    }
+
+    It 'rejects a managed Skill target reparse point before uninstall' `
+        -Skip:(-not $script:skillAdapterJunctionAvailable) {
+        $source = New-TestSkillSource
+        $plan = Get-SkillInstallPlan -Tool (
+            New-TestSkillTool -SourcePath $source -Hash (Get-SkillSourceHash -SourcePath $source)
+        )
+        [void](Install-ManagedSkill -Plan $plan)
+        Remove-Item -LiteralPath $plan.TargetPath -Recurse -Force
+        $outside = Join-Path (Get-TestSkillBasePath) 'outside-uninstall-target'
+        New-Item -ItemType Directory -Path $outside -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $outside 'sentinel.txt') `
+            -Value 'must remain' `
+            -Encoding ASCII
+        New-Item -ItemType Junction -Path $plan.TargetPath -Target $outside | Out-Null
+
+        try {
+            $result = Uninstall-ManagedSkill -Plan $plan
+
+            $result.Status | Should Be 'failed'
+            $result.Message | Should Match 'reparse|symbolic|junction'
+            (Test-Path -LiteralPath (Join-Path $outside 'sentinel.txt') -PathType Leaf) |
+                Should Be $true
+        }
+        finally {
+            if (Test-Path -LiteralPath $plan.TargetPath) {
+                [IO.Directory]::Delete($plan.TargetPath)
+            }
+        }
     }
 }
 
