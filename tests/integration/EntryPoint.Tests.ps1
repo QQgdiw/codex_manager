@@ -119,6 +119,20 @@ Describe 'Codex tool manager entry point' {
         (Test-Path -LiteralPath $fixture.Target) | Should Be $false
     }
 
+    It 'defaults to plan when no command is supplied' {
+        $fixture = New-EntryPointFixture -Root (Join-Path $TestDrive 'default-plan')
+
+        $run = Invoke-EntryPointProcess -Arguments @(
+            '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist
+        )
+
+        $run.ExitCode | Should Be 0
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Command | Should Be 'plan'
+        $body.Status | Should Be 'succeeded'
+        (Test-Path -LiteralPath $fixture.Target) | Should Be $false
+    }
+
     It 'returns business failure for an unapproved tool without treating it as fatal' {
         $fixture = New-EntryPointFixture -Root (Join-Path $TestDrive 'unapproved') `
             -Approval 'proposed'
@@ -153,12 +167,42 @@ Describe 'Codex tool manager entry point' {
         $body.Message | Should Match 'TOML|converter|config'
     }
 
+    It 'returns fatal exit code two for missing configuration path' {
+        $fixture = New-EntryPointFixture -Root (Join-Path $TestDrive 'missing-config')
+        $missingConfig = Join-Path $TestDrive 'does-not-exist.toml'
+
+        $run = Invoke-EntryPointProcess -Arguments @(
+            'plan', '-Config', $missingConfig, '-Whitelist', $fixture.Whitelist
+        )
+
+        $run.ExitCode | Should Be 2
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Status | Should Be 'fatal'
+        $body.Message | Should Match 'not found|exist|path|Config'
+    }
+
     It 'deploy dry-run reports planned work and leaves the target absent' {
         $fixture = New-EntryPointFixture -Root (Join-Path $TestDrive 'dryrun')
 
         $run = Invoke-EntryPointProcess -Arguments @(
             'deploy', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist,
             '-DryRun'
+        )
+
+        $run.ExitCode | Should Be 0
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Command | Should Be 'deploy'
+        $body.Status | Should Be 'succeeded'
+        @($body.Results)[0].Status | Should Be 'dry_run'
+        (Test-Path -LiteralPath $fixture.Target) | Should Be $false
+    }
+
+    It 'deploy WhatIf reports planned work and leaves the target absent' {
+        $fixture = New-EntryPointFixture -Root (Join-Path $TestDrive 'whatif')
+
+        $run = Invoke-EntryPointProcess -Arguments @(
+            'deploy', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist,
+            '-WhatIf'
         )
 
         $run.ExitCode | Should Be 0

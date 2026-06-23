@@ -482,7 +482,7 @@ function Invoke-ManagerStatus {
 
 try {
     if ([string]::IsNullOrWhiteSpace($Command)) {
-        throw 'A command is required.'
+        $Command = 'plan'
     }
 
     $normalizedCommand = $Command.ToLowerInvariant()
