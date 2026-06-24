@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-项目需求澄清和项目计划已经完成，正式文档分别位于 `Resources/PRD.md` 与 `Resources/PP.md`。PP Task 1 已建立仓库安全与测试基线；下一阶段将定义白名单 Schema 和 PowerShell 自动化核心。
+首期基础闭环已经完成端到端验收。正式需求和计划分别位于 `Resources/PRD.md` 与 `Resources/PP.md`；资源市场、白名单、六类场景配置、PowerShell 管理入口、DPAPI 凭据、受管回滚、dry-run 部署和分层验证记录均已建立。真实安装仍受当前 planning-only 部署适配器限制，load/smoke verifier 也尚未接入。
 
 ## 首期范围
 
@@ -51,3 +51,4 @@
 - journal 自身存储路径从可信根到 StateRoot、journals、operation、backups、journal/temp/lock 父路径逐级验证；缺失目录逐级创建并在每一级创建后复检。
 - create 与 directory_create 必须在实际创建后调用 `Confirm-FileChange` 记录身份；未确认项回滚时保留并进入 `Residuals`。
 - 外部回滚命令只记录为残留信息，系统不会执行字符串 shell 命令。
+- Task 19 最终验收：全量测试 284 passed / 0 failed；所有 `Resources/*.toml` 可解析；敏感扫描未发现交付记录中的明文凭据；PRD 覆盖项均有实现、记录或明确限制。

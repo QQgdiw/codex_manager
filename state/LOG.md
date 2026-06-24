@@ -82,3 +82,11 @@
 - 首批 4 个 approved 工具的部署计划生成成功；白名单补充 `rollback_capability = "managed_files"` 后，`deploy -DryRun` 对 4 项全部返回 `dry_run`。
 - 分层验证结果：4 项 static verification 通过；4 项 load verification 因缺少 load verifier 被阻塞；4 项 smoke verification 因 load 未通过被阻塞。
 - 当前入口 `Invoke-CodexToolManager.ps1` 的部署适配器仍为 planning-only blocked adapter，Task 18 未执行真实安装，不能宣称工具已部署完成。
+
+## 2026-06-24：Task 19 首期端到端验收
+
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Run-Tests.ps1 -All` 完成，结果为 284 passed、0 failed、0 skipped。
+- `Resources/*.toml` 全部通过 `scripts/python/toml_to_json.py` 解析。
+- 敏感内容扫描未发现交付记录中的明文凭据；命中项仅包括 `TODO.md` 文件名、PP 中的扫描命令样例和脚本变量 `$token`。
+- PRD 覆盖核对：五类市场文档、六类场景配置、TOML 白名单、审批记录、部署 dry-run、分层验证、回滚、DPAPI、状态记录和后续路线均已有对应实现、文档或明确限制。
+- 剩余限制：真实部署适配器和 load/smoke verifier 尚未接入，当前首期闭环只能证明计划、dry-run、静态验证和阻塞边界。

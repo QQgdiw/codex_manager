@@ -21,14 +21,15 @@
 
 ## 下一阶段
 
-- [ ] 定义 `tool_whitelist.toml` Schema。
+- [x] 定义 `tool_whitelist.toml` Schema。
 - [x] 实现并验证变更日志与受管回滚安全机制（PP Task 5）。
-- [ ] 设计 PowerShell 入口和部署适配器。
-- [ ] 定义 `verify_record.md` 模板。
-- [ ] 首次填充五类市场文档。
+- [x] 设计 PowerShell 入口和部署适配器。
+- [x] 定义 `verify_record.md` 模板。
+- [x] 首次填充五类市场文档。
 - [x] 评审并批准首批白名单工具。
-- [ ] 编写六类场景化配置。
+- [x] 编写六类场景化配置。
 - [x] 执行首批 approved 工具的部署 dry-run 和静态分层验证。
+- [x] 完成首期端到端验收：全量测试、TOML 解析、敏感内容扫描和 PRD 覆盖核对。
 - [ ] 接入真实部署适配器和 load/smoke verifier；当前入口仍为 planning-only，尚未完成真实安装。
 
 ## 后续路线
