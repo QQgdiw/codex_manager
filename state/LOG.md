@@ -74,3 +74,11 @@
 - 用户明确批准首批 4 项进入 `approved` 状态：`plugin.openai-bundled.browser`、`plugin.openai-curated.superpowers`、`mcp.modelcontextprotocol.sequential-thinking`、`skill.context-engineering.context-fundamentals`。
 - 本次审批仅覆盖首期最小闭环所需的浏览器检索、开发工作流、顺序思考 MCP 和上下文基础 Skill；其他候选项保持 `proposed`。
 - 白名单审批不等同于已部署或已动态验证；后续仍需执行计划生成、部署、静态验证、加载验证和最小调用验证。
+
+## 2026-06-24：Task 18 部署 dry-run 与分层验证
+
+- 沙箱内 `codex login status` 返回 `Not logged in`；沙箱外用户上下文返回 `Logged in using ChatGPT`，未读取或记录 `auth.json` 正文。
+- 沙箱内 `codex doctor` 受限于 restricted network，沙箱外 `codex doctor` 返回 15 ok、0 fail，但有 update probe timeout 和 WebSocket timeout 降级警告。
+- 首批 4 个 approved 工具的部署计划生成成功；白名单补充 `rollback_capability = "managed_files"` 后，`deploy -DryRun` 对 4 项全部返回 `dry_run`。
+- 分层验证结果：4 项 static verification 通过；4 项 load verification 因缺少 load verifier 被阻塞；4 项 smoke verification 因 load 未通过被阻塞。
+- 当前入口 `Invoke-CodexToolManager.ps1` 的部署适配器仍为 planning-only blocked adapter，Task 18 未执行真实安装，不能宣称工具已部署完成。
