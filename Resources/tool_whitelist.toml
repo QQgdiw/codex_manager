@@ -18,6 +18,218 @@ plugin_selector = "browser"
 evidence = "local_manifest_sha256"
 
 [[tools]]
+id = "mcp.modelcontextprotocol.filesystem"
+name = "Model Context Protocol Filesystem Server"
+type = "mcp"
+source = "https://github.com/modelcontextprotocol/servers.git"
+version = "0.6.3"
+sha256 = "0f27689f3a0255fc05b8a2a0c750c076be4f80e3548ec21733ab221aeee6d728"
+license = "MIT/Apache-2.0 transition"
+approval = "proposed"
+risk = "high"
+install_target = "MCP/modelcontextprotocol/filesystem"
+credential_refs = []
+conflicts = []
+mcp_transport = "stdio"
+mcp_name = "modelcontextprotocol-filesystem"
+upstream_commit = "64b1cb0208cc49a4f5ae55fa71df5cf67a3cdc3d"
+evidence = "local_package_json_sha256"
+
+[tools.stdio]
+command = "node"
+args = ["dist/index.js"]
+working_directory = "E:\\codex\\MCP\\servers\\src\\filesystem"
+startup_file = "dist/index.js"
+
+[[tools]]
+id = "mcp.modelcontextprotocol.memory"
+name = "Model Context Protocol Memory Server"
+type = "mcp"
+source = "https://github.com/modelcontextprotocol/servers.git"
+version = "0.6.3"
+sha256 = "c8be9a69b048ef7d757cbbcc1e027a590f7b9faf18c58d8ac98a1c49f343da76"
+license = "MIT/Apache-2.0 transition"
+approval = "proposed"
+risk = "medium"
+install_target = "MCP/modelcontextprotocol/memory"
+credential_refs = []
+conflicts = []
+mcp_transport = "stdio"
+mcp_name = "modelcontextprotocol-memory"
+upstream_commit = "64b1cb0208cc49a4f5ae55fa71df5cf67a3cdc3d"
+evidence = "local_package_json_sha256"
+
+[tools.stdio]
+command = "node"
+args = ["dist/index.js"]
+working_directory = "E:\\codex\\MCP\\servers\\src\\memory"
+startup_file = "dist/index.js"
+
+[[tools]]
+id = "mcp.modelcontextprotocol.sequential-thinking"
+name = "Model Context Protocol Sequential Thinking Server"
+type = "mcp"
+source = "https://github.com/modelcontextprotocol/servers.git"
+version = "0.6.2"
+sha256 = "3585fb676eedab035250d4a73c5f1f6bcbd9ad70e098188dbde5f40a54fbbbc7"
+license = "MIT/Apache-2.0 transition"
+approval = "proposed"
+risk = "medium"
+install_target = "MCP/modelcontextprotocol/sequential-thinking"
+credential_refs = []
+conflicts = []
+mcp_transport = "stdio"
+mcp_name = "modelcontextprotocol-sequential-thinking"
+upstream_commit = "64b1cb0208cc49a4f5ae55fa71df5cf67a3cdc3d"
+evidence = "local_package_json_sha256"
+
+[tools.stdio]
+command = "node"
+args = ["dist/index.js"]
+working_directory = "E:\\codex\\MCP\\servers\\src\\sequentialthinking"
+startup_file = "dist/index.js"
+
+[[tools]]
+id = "skill.context-engineering.context-fundamentals"
+name = "Context Engineering Fundamentals"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+sha256 = "c44910ed04be86c73a1d3b6272cd96f9d5e144d81c1241d24612089a70096c27"
+license = "UNKNOWN"
+approval = "proposed"
+risk = "low"
+install_target = "Skills/context-fundamentals"
+credential_refs = []
+conflicts = []
+skill_id = "context-fundamentals"
+source_path = "E:\\codex\\Skills\\AgentSkillsforContextEngineering\\skills\\context-fundamentals"
+managed_workspace_root = "E:\\codex"
+skill_manifest = "SKILL.md"
+upstream_commit = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+evidence = "local_skill_source_hash"
+
+[[tools]]
+id = "skill.context-engineering.context-optimization"
+name = "Context Optimization"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+sha256 = "d44cd9da61287a62a363092ecd4394c951a3145dd4b8095ca7fa60dd2fc339ed"
+license = "UNKNOWN"
+approval = "proposed"
+risk = "medium"
+install_target = "Skills/context-optimization"
+credential_refs = []
+conflicts = []
+skill_id = "context-optimization"
+source_path = "E:\\codex\\Skills\\AgentSkillsforContextEngineering\\skills\\context-optimization"
+managed_workspace_root = "E:\\codex"
+skill_manifest = "SKILL.md"
+upstream_commit = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+evidence = "local_skill_source_hash"
+
+[[tools]]
+id = "skill.context-engineering.context-compression"
+name = "Context Compression"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+sha256 = "a1d894e9dd46bf3bbcc33d1168244a5ffe1b146b6160f5c76b3393f7b3978ebe"
+license = "UNKNOWN"
+approval = "proposed"
+risk = "medium"
+install_target = "Skills/context-compression"
+credential_refs = []
+conflicts = []
+skill_id = "context-compression"
+source_path = "E:\\codex\\Skills\\AgentSkillsforContextEngineering\\skills\\context-compression"
+managed_workspace_root = "E:\\codex"
+skill_manifest = "SKILL.md"
+upstream_commit = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+evidence = "local_skill_source_hash"
+
+[[tools]]
+id = "skill.context-engineering.filesystem-context"
+name = "Filesystem Context"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+sha256 = "cf4ff9f0e6a95aa9d029181e0ae508c81d9af2de47c8aa1a76b8f7837424d031"
+license = "UNKNOWN"
+approval = "proposed"
+risk = "medium"
+install_target = "Skills/filesystem-context"
+credential_refs = []
+conflicts = []
+skill_id = "filesystem-context"
+source_path = "E:\\codex\\Skills\\AgentSkillsforContextEngineering\\skills\\filesystem-context"
+managed_workspace_root = "E:\\codex"
+skill_manifest = "SKILL.md"
+upstream_commit = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+evidence = "local_skill_source_hash"
+
+[[tools]]
+id = "skill.context-engineering.tool-design"
+name = "Tool Design"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+sha256 = "7d1b780497b4b8d062e7ae39b80fb23ed4bff178d61775544520fde1986ab82b"
+license = "UNKNOWN"
+approval = "proposed"
+risk = "medium"
+install_target = "Skills/tool-design"
+credential_refs = []
+conflicts = []
+skill_id = "tool-design"
+source_path = "E:\\codex\\Skills\\AgentSkillsforContextEngineering\\skills\\tool-design"
+managed_workspace_root = "E:\\codex"
+skill_manifest = "SKILL.md"
+upstream_commit = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+evidence = "local_skill_source_hash"
+
+[[tools]]
+id = "skill.context-engineering.multi-agent-patterns"
+name = "Multi-Agent Patterns"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+sha256 = "c1fa8cfd49a4744c3cdfb88ff715fe73674860a17c2fd7a3100d3498a9b52923"
+license = "UNKNOWN"
+approval = "proposed"
+risk = "medium"
+install_target = "Skills/multi-agent-patterns"
+credential_refs = []
+conflicts = []
+skill_id = "multi-agent-patterns"
+source_path = "E:\\codex\\Skills\\AgentSkillsforContextEngineering\\skills\\multi-agent-patterns"
+managed_workspace_root = "E:\\codex"
+skill_manifest = "SKILL.md"
+upstream_commit = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+evidence = "local_skill_source_hash"
+
+[[tools]]
+id = "skill.context-engineering.harness-engineering"
+name = "Harness Engineering"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+sha256 = "c00f877c5e4437c2d0be547806f71e287c0882fa447a693f04b16d84241d4746"
+license = "UNKNOWN"
+approval = "proposed"
+risk = "medium"
+install_target = "Skills/harness-engineering"
+credential_refs = []
+conflicts = []
+skill_id = "harness-engineering"
+source_path = "E:\\codex\\Skills\\AgentSkillsforContextEngineering\\skills\\harness-engineering"
+managed_workspace_root = "E:\\codex"
+skill_manifest = "SKILL.md"
+upstream_commit = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+evidence = "local_skill_source_hash"
+
+[[tools]]
 id = "plugin.openai-curated.superpowers"
 name = "Superpowers"
 type = "plugin"
