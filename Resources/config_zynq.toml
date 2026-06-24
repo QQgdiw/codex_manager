@@ -1,0 +1,23 @@
+schema_version = "1.0"
+profile_id = "zynq"
+name = "Zynq FPGA and heterogeneous ARM"
+description = "HDL, simulation, synthesis, timing, Linux, device tree, and hardware/software co-debugging."
+approval_policy = "approved_only"
+required_capabilities = [
+    "browser_retrieval",
+    "resource_synthesis",
+    "workspace_file_access",
+    "hdl_review",
+    "timing_report_analysis",
+    "device_tree_context"
+]
+enabled_tools = []
+
+[constraints]
+minimal_default_per_capability = true
+requires_approved_tools = true
+allow_network_research = true
+allow_manual_trigger_only = true
+
+[notes]
+reason_no_enabled_tools = "The current whitelist has no approved tools. Enable only approved retrieval, filesystem, and reasoning helpers after approval."

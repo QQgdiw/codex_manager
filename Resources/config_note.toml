@@ -1,0 +1,86 @@
+schema_version = "1.0"
+profile_id = "note"
+name = "Candidate tool notes"
+description = "Commented candidate catalog. Do not deploy this profile directly."
+approval_policy = "approved_only"
+required_capabilities = ["browser_retrieval", "resource_synthesis"]
+enabled_tools = []
+
+# Usage:
+# - Copy only approved tool IDs into a scenario config's enabled_tools array.
+# - Keep enabled_tools empty when no matching tool has approval = "approved".
+# - Prefer one default implementation per capability unless a task explicitly needs more.
+
+# Browser retrieval, HTML/PDF discovery, and web inspection.
+# whitelist_id = "plugin.openai-bundled.browser"
+# type = "plugin"
+# scenarios = ["basic", "mcu", "zynq", "hardware", "file"]
+# risk = "medium"
+# dependency = "Installed Codex Browser plugin"
+# conflicts = []
+
+# General agentic planning and development workflow skills.
+# whitelist_id = "plugin.openai-curated.superpowers"
+# type = "plugin"
+# scenarios = ["basic", "mcu", "zynq", "hardware", "file"]
+# risk = "medium"
+# dependency = "Installed Codex Superpowers plugin"
+# conflicts = []
+
+# Word and document generation.
+# whitelist_id = "plugin.openai-primary-runtime.documents"
+# type = "plugin"
+# scenarios = ["file"]
+# risk = "medium"
+# dependency = "Installed Codex Documents plugin"
+# conflicts = []
+
+# Presentation generation and verification.
+# whitelist_id = "plugin.openai-primary-runtime.presentations"
+# type = "plugin"
+# scenarios = ["file"]
+# risk = "medium"
+# dependency = "Installed Codex Presentations plugin"
+# conflicts = []
+
+# Spreadsheet analysis and workbook generation.
+# whitelist_id = "plugin.openai-primary-runtime.spreadsheets"
+# type = "plugin"
+# scenarios = ["file", "hardware"]
+# risk = "medium"
+# dependency = "Installed Codex Spreadsheets plugin"
+# conflicts = []
+
+# Local filesystem MCP. High risk; enable only for tightly scoped tasks.
+# whitelist_id = "mcp.modelcontextprotocol.filesystem"
+# type = "mcp"
+# scenarios = ["basic", "mcu", "zynq", "hardware", "file"]
+# risk = "high"
+# dependency = "Node package build output at the pinned local source path"
+# conflicts = []
+
+# Persistent memory MCP. Use only when persistent cross-task memory is required.
+# whitelist_id = "mcp.modelcontextprotocol.memory"
+# type = "mcp"
+# scenarios = ["basic"]
+# risk = "medium"
+# dependency = "Node package build output at the pinned local source path"
+# conflicts = []
+
+# Sequential thinking MCP. Use only if a task needs explicit reasoning trace tools.
+# whitelist_id = "mcp.modelcontextprotocol.sequential-thinking"
+# type = "mcp"
+# scenarios = ["basic", "mcu", "zynq", "hardware"]
+# risk = "medium"
+# dependency = "Node package build output at the pinned local source path"
+# conflicts = []
+
+# Context engineering skills. These are local candidate skills, not enabled
+# until each entry is approved in Resources/tool_whitelist.toml.
+# whitelist_id = "skill.context-engineering.context-fundamentals"
+# whitelist_id = "skill.context-engineering.context-optimization"
+# whitelist_id = "skill.context-engineering.context-compression"
+# whitelist_id = "skill.context-engineering.filesystem-context"
+# whitelist_id = "skill.context-engineering.tool-design"
+# whitelist_id = "skill.context-engineering.multi-agent-patterns"
+# whitelist_id = "skill.context-engineering.harness-engineering"

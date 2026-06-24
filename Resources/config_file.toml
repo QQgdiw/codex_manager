@@ -1,0 +1,23 @@
+schema_version = "1.0"
+profile_id = "file"
+name = "Document and file processing"
+description = "PDF, Word, Excel, web pages, extraction, summarization, generation, and conversion."
+approval_policy = "approved_only"
+required_capabilities = [
+    "browser_retrieval",
+    "resource_synthesis",
+    "workspace_file_access",
+    "document_generation",
+    "spreadsheet_generation",
+    "presentation_generation"
+]
+enabled_tools = []
+
+[constraints]
+minimal_default_per_capability = true
+requires_approved_tools = true
+allow_network_research = true
+allow_manual_trigger_only = true
+
+[notes]
+reason_no_enabled_tools = "The current whitelist has no approved tools. Documents, spreadsheets, and presentations plugins remain candidates until approved."

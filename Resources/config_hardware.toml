@@ -1,0 +1,23 @@
+schema_version = "1.0"
+profile_id = "hardware"
+name = "Schematic and PCB development"
+description = "KiCad, Altium Designer, Cadence, component data, design checks, and hardware documentation."
+approval_policy = "approved_only"
+required_capabilities = [
+    "browser_retrieval",
+    "resource_synthesis",
+    "workspace_file_access",
+    "component_data_lookup",
+    "design_rule_notes",
+    "spreadsheet_review"
+]
+enabled_tools = []
+
+[constraints]
+minimal_default_per_capability = true
+requires_approved_tools = true
+allow_network_research = true
+allow_manual_trigger_only = true
+
+[notes]
+reason_no_enabled_tools = "The current whitelist has no approved tools. Enable approved retrieval and document/spreadsheet helpers only when needed."
