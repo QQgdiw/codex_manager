@@ -33,12 +33,23 @@ Describe 'Test-WhitelistDocument' {
         $null -eq $result.Warnings | Should Be $false
     }
 
-    It 'accepts the project whitelist without inventing approved tools' {
+    It 'accepts the project whitelist with the user-approved baseline' {
         $document = Read-ProjectToml -Path (Join-Path $projectRoot 'Resources\tool_whitelist.toml')
         $result = Test-WhitelistDocument -Document $document
 
         $result.IsValid | Should Be $true
-        @($document.tools | Where-Object { $_.approval -eq 'approved' }).Count | Should Be 0
+        $approvedIds = @(
+            $document.tools |
+                Where-Object { $_.approval -eq 'approved' } |
+                ForEach-Object { $_.id }
+        )
+        @($approvedIds).Count | Should Be 4
+        ($approvedIds -contains 'plugin.openai-bundled.browser') | Should Be $true
+        ($approvedIds -contains 'plugin.openai-curated.superpowers') | Should Be $true
+        ($approvedIds -contains 'mcp.modelcontextprotocol.sequential-thinking') |
+            Should Be $true
+        ($approvedIds -contains 'skill.context-engineering.context-fundamentals') |
+            Should Be $true
     }
 
     It 'returns all ordinary field errors instead of throwing' {

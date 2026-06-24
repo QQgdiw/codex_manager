@@ -68,3 +68,9 @@
 - 修复统一使用 `Validate-JournalStoragePath`：所有公开入口在锁前验证，锁、journal temp 和 backup 打开前再次验证。
 - 缺失 StateRoot 及其内部目录从可信根开始逐级创建，每一级创建前后检查词法边界和 ReparsePoint；禁止将 StateRoot 注册为递归删除目标。
 - GREEN：存储攻击组 8/8、Target 49/49、Unit 130/130、Integration 3/3、All 133/133、组合攻击探针 23/23。
+
+## 2026-06-24：Task 17 首批白名单审批
+
+- 用户明确批准首批 4 项进入 `approved` 状态：`plugin.openai-bundled.browser`、`plugin.openai-curated.superpowers`、`mcp.modelcontextprotocol.sequential-thinking`、`skill.context-engineering.context-fundamentals`。
+- 本次审批仅覆盖首期最小闭环所需的浏览器检索、开发工作流、顺序思考 MCP 和上下文基础 Skill；其他候选项保持 `proposed`。
+- 白名单审批不等同于已部署或已动态验证；后续仍需执行计划生成、部署、静态验证、加载验证和最小调用验证。

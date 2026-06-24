@@ -128,11 +128,11 @@ Describe 'Scenario config profiles' {
         }
     }
 
-    It 'does not enable proposed whitelist items before user approval' {
+    It 'keeps generated scenario profiles empty until explicit profile enablement' {
         $approvedCount = @(
             $script:whitelist.tools | Where-Object { $_.approval -eq 'approved' }
         ).Count
-        $approvedCount | Should Be 0
+        $approvedCount | Should Be 4
 
         foreach ($file in $script:scenarioFiles) {
             $config = Read-ProjectToml -Path (Join-Path $projectRoot "Resources\$file")
@@ -148,7 +148,7 @@ Describe 'Scenario config profiles' {
             description = 'Invalid proposed tool enablement.'
             approval_policy = 'approved_only'
             required_capabilities = @('browser_retrieval', 'resource_synthesis')
-            enabled_tools = @('plugin.openai-bundled.browser')
+            enabled_tools = @('mcp.modelcontextprotocol.memory')
         }
 
         $errors = Get-ScenarioConfigErrors -Config $config `
