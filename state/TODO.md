@@ -36,7 +36,10 @@
 - [x] 编写六类场景化配置。
 - [x] 执行首批 approved 工具的部署 dry-run 和静态分层验证。
 - [x] 完成首期端到端验收：全量测试、TOML 解析、敏感内容扫描和 PRD 覆盖核对。
-- [ ] 接入真实部署适配器和 load/smoke verifier；当前入口仍为 planning-only，尚未完成真实安装。
+- [x] 接入 plugin 类型真实部署适配器和 load verifier，首批覆盖 `browser` 与 `superpowers`。
+- [ ] 接入 Skill 真实部署适配器和 load/smoke verifier。
+- [ ] 接入 MCP 真实部署适配器和 load/smoke verifier。
+- [ ] 为插件补充真正的功能性 smoke verifier；当前只证明 load 可见，不伪造插件功能成功。
 - [ ] 后续如做审批可视化，应以 `Resources/approval_review.toml` 为数据源，而不是解析 Markdown。
 - [ ] 下一次更新 `Resources/github_market.md` 时继续执行跨周去重，已收录仓库不参与后续周榜名额。
 

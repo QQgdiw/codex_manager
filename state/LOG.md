@@ -107,3 +107,11 @@
 - 新增批准 `mcp.modelcontextprotocol.filesystem` 和 `skill.context-engineering.filesystem-context`；白名单当前共有 6 个 `approved` 工具。
 - 文件系统相关条目虽然已批准，但真实部署时仍必须执行根目录约束、写入范围约束、数据最小化、静态验证、加载验证、最小功能调用验证和失败回滚记录。
 - 验证结果：`Resources/tool_whitelist.toml` 与 `Resources/approval_review.toml` 均可解析；单元测试 267 passed、0 failed；`git diff --check` 通过。
+
+## 2026-06-25：插件真实部署与 load 验证最小闭环
+
+- 按用户确认的方案 A，只接入 plugin 类型真实路径，首批目标为 `plugin.openai-bundled.browser` 和 `plugin.openai-curated.superpowers`。
+- `scripts/Invoke-CodexToolManager.ps1` 已通过结构化 Codex CLI executor 接入 `Install-ManagedPlugin`；测试使用临时 `codex.cmd` 注入 `PATH`，未调用真实用户 Codex 配置。
+- `verify` 已为 plugin 附加 load verifier，通过 `codex plugin list --json` 检查插件是否可见；smoke verification 仍因缺少功能性 verifier 保守阻塞。
+- Skill 和 MCP 仍保持 blocked adapter，未进入真实安装或加载验证。
+- TDD 证据：plugin deploy RED 为 21 passed / 1 failed，GREEN 为 22 passed / 0 failed；plugin verify RED 为 22 passed / 1 failed，GREEN 为 23 passed / 0 failed；相关单元测试均为 267 passed / 0 failed。

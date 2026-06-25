@@ -6,11 +6,13 @@
 
 ## 当前阶段
 
-首期基础闭环已经完成端到端验收。正式需求和计划分别位于 `Resources/PRD.md` 与 `Resources/PP.md`；资源市场、白名单、审批辅助表、六类场景配置、PowerShell 管理入口、DPAPI 凭据、受管回滚、dry-run 部署和分层验证记录均已建立。真实安装仍受当前 planning-only 部署适配器限制，load/smoke verifier 也尚未接入。
+首期基础闭环已经完成端到端验收。正式需求和计划分别位于 `Resources/PRD.md` 与 `Resources/PP.md`；资源市场、白名单、审批辅助表、六类场景配置、PowerShell 管理入口、DPAPI 凭据、受管回滚、dry-run 部署和分层验证记录均已建立。
 
 2026-06-25 已完成市场与审批强化：`Resources/approval_review.toml` 和 `Resources/approval_review.md` 提供面向后续可视化的审批辅助数据；`Resources/plugins_market.md` 已按本地缓存、CLI 和 GitHub `openai/plugins` 来源重建；`Resources/github_market.md` 已扩展为 2026-W01 至 2026-W26 的工程候选池，并记录 `stars >= 1000`、近似回溯、跨周去重和候选不足周；`Resources/event_market.md` 已从泛 AI 行业事件改为工程工作流事件市场。
 
 2026-06-25 用户批准 `approval_review.md` 中建议动作为 `approve_now` 和 `needs_review` 的条目，当前白名单共有 6 个 `approved` 工具；其中 `mcp.modelcontextprotocol.filesystem` 和 `skill.context-engineering.filesystem-context` 虽已批准，但真实部署必须继续执行文件系统根目录、写入范围、数据最小化和回滚边界约束。
+
+2026-06-25 已接入插件真实部署与 load verification 最小闭环。当前真实路径仅覆盖 `plugin` 类型，首批目标为 `plugin.openai-bundled.browser` 和 `plugin.openai-curated.superpowers`；Skill 和 MCP 仍保持 blocked adapter，尚未接入真实安装、加载验证或 smoke 验证。插件 smoke verification 仍保守阻塞，不能宣称插件功能性调用已通过。
 
 ## 首期范围
 
@@ -59,3 +61,4 @@
 - 外部回滚命令只记录为残留信息，系统不会执行字符串 shell 命令。
 - Task 19 最终验收：全量测试 284 passed / 0 failed；所有 `Resources/*.toml` 可解析；敏感扫描未发现交付记录中的明文凭据；PRD 覆盖项均有实现、记录或明确限制。
 - 2026-06-25 市场与审批强化最终验收：全量测试 287 passed / 0 failed；所有 `Resources/*.toml` 可解析；精确敏感 token 扫描无命中。
+- 2026-06-25 插件真实部署与验证最小闭环：入口已对 plugin 类型接入真实 Codex CLI executor、`Install-ManagedPlugin` 和 `Test-ManagedPlugin` load verifier；Skill/MCP 仍 blocked；插件 smoke verifier 尚未实现。
