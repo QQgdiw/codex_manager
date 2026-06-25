@@ -102,6 +102,7 @@ Collection rules:
 
 - Use `stars >= 1000` as a hard filter.
 - Collect at least 20 candidates per 2026 week where the search source returns enough relevant projects.
+- Deduplicate repositories across weeks. If a repository was already included in an earlier week, skip it for later weeks, do not count it toward that later week's 20-30 target, and continue down the candidate list until the weekly quota is filled or the source is exhausted.
 - Preserve the method limitation: GitHub has no official historical Trending API, so results are GitHub-search-based approximate candidates, not canonical historical trending.
 - Prefer projects related to engineering workflows: coding agents, developer tools, MCP, IDE integrations, automation, testing, documents, EDA-adjacent tooling, embedded workflow support, and repo operations.
 - Exclude consumer-only and unrelated AI demos unless they clearly affect engineering workflows.
