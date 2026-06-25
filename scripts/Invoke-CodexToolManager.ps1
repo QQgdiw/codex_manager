@@ -185,9 +185,16 @@ function Read-ManagerPlan {
 }
 
 function ConvertTo-ManagerVerificationTool {
-    param([object]$Item)
+    param(
+        [object]$Item,
+        [AllowNull()][scriptblock]$Executor
+    )
 
-    return [pscustomobject][ordered]@{
+    if ($Item.Type -eq 'plugin') {
+        Add-ManagerPluginSnapshotDefaults -Item $Item
+    }
+
+    $tool = [pscustomobject][ordered]@{
         id = "$($Item.Id)"
         name = "$($Item.Name)"
         type = "$($Item.Type)"
@@ -195,7 +202,15 @@ function ConvertTo-ManagerVerificationTool {
         version = "$($Item.Version)"
         credential_refs = @($Item.CredentialRefs)
         sensitive_redactions = @()
+        ApprovedSnapshot = $Item.ApprovedSnapshot
     }
+
+    if ($Item.Type -eq 'plugin') {
+        $tool | Add-Member -NotePropertyName LoadVerifier `
+            -NotePropertyValue (New-ManagerPluginLoadVerifier -Executor $Executor)
+    }
+
+    return $tool
 }
 
 function New-ManagerCodexExecutor {
@@ -327,6 +342,17 @@ function New-ManagerPluginAdapter {
     }.GetNewClosure()
 }
 
+function New-ManagerPluginLoadVerifier {
+    param([scriptblock]$Executor)
+
+    return {
+        param([object]$Tool)
+
+        $plan = Get-PluginInstallPlan -Tool $Tool
+        Test-ManagedPlugin -Plan $plan -Executor $Executor
+    }.GetNewClosure()
+}
+
 function New-ManagerAdapterMap {
     param([AllowNull()][scriptblock]$Executor)
 
@@ -442,8 +468,9 @@ function Invoke-ManagerVerify {
     }
 
     $results = New-Object System.Collections.Generic.List[object]
+    $executor = New-ManagerCodexExecutor
     foreach ($item in @($plan.Items)) {
-        $tool = ConvertTo-ManagerVerificationTool -Item $item
+        $tool = ConvertTo-ManagerVerificationTool -Item $item -Executor $executor
         $results.Add((Invoke-StaticVerification -Tool $tool))
         $results.Add((Invoke-LoadVerification -Tool $tool))
         $results.Add((Invoke-SmokeVerification -Tool $tool))
