@@ -64,6 +64,55 @@ rollback_capability = "managed_files"
     }
 }
 
+function New-EntryPointPluginFixture {
+    param(
+        [string]$Root,
+        [string]$ToolId = 'plugin.openai-bundled.browser',
+        [string]$Selector = 'browser',
+        [string]$Marketplace = 'openai-bundled'
+    )
+
+    $configPath = Join-Path $Root 'config.toml'
+    $whitelistPath = Join-Path $Root 'whitelist.toml'
+    $hash = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+    Write-EntryPointTextFile -Path $configPath -Text @"
+schema_version = 1
+name = "plugin-entrypoint"
+enabled_tools = ["$ToolId"]
+"@
+    Write-EntryPointTextFile -Path $whitelistPath -Text @"
+schema_version = "1.0"
+
+[[tools]]
+id = "$ToolId"
+name = "Entry Point Plugin"
+type = "plugin"
+source = "https://github.com/example/plugin-market"
+version = "v1.0.0"
+sha256 = "$hash"
+license = "MIT"
+approval = "approved"
+risk = "low"
+install_target = "Plugins/$Marketplace/$Selector"
+credential_refs = []
+conflicts = []
+dependencies = []
+permissions = []
+external_changes = []
+rollback_capability = "managed_files"
+marketplace_name = "$Marketplace"
+plugin_selector = "$Selector"
+"@
+
+    return [pscustomobject]@{
+        Config = $configPath
+        Whitelist = $whitelistPath
+        ToolId = $ToolId
+        Selector = $Selector
+        Marketplace = $Marketplace
+    }
+}
+
 function Invoke-EntryPointProcess {
     param([string[]]$Arguments)
 
@@ -97,6 +146,38 @@ function ConvertFrom-EntryPointJson {
 
     $Run.StdOut.Trim() | Should Not Be ''
     return ($Run.StdOut | ConvertFrom-Json)
+}
+
+function New-FakeCodexCli {
+    param([string]$Root)
+
+    $bin = Join-Path $Root 'fake-bin'
+    New-Item -ItemType Directory -Path $bin -Force | Out-Null
+    $log = Join-Path $Root 'fake-codex.log'
+    $script = Join-Path $bin 'codex.cmd'
+    Set-Content -LiteralPath $script -Encoding ASCII -Value @"
+@echo off
+echo %*>>"%CODEX_TOOL_MANAGER_FAKE_LOG%"
+if "%1"=="plugin" if "%2"=="marketplace" if "%3"=="add" (
+  echo {"ok":true}
+  exit /b 0
+)
+if "%1"=="plugin" if "%2"=="add" (
+  echo {"ok":true}
+  exit /b 0
+)
+if "%1"=="plugin" if "%2"=="list" (
+  echo [{"plugin":"browser","marketplace":"openai-bundled"},{"plugin":"superpowers","marketplace":"openai-curated"}]
+  exit /b 0
+)
+echo unsupported fake codex command: %* 1>&2
+exit /b 3
+"@
+
+    return [pscustomobject]@{
+        Bin = $bin
+        Log = $log
+    }
 }
 
 Describe 'Codex tool manager entry point' {
@@ -225,6 +306,39 @@ Describe 'Codex tool manager entry point' {
         $body.Status | Should Be 'succeeded'
         @($body.Results)[0].Status | Should Be 'dry_run'
         (Test-Path -LiteralPath $fixture.Target) | Should Be $false
+    }
+
+    It 'keeps approved plugin deploy dry-run from calling Codex CLI' {
+        $root = Join-Path $TestDrive 'plugin-dryrun'
+        $fixture = New-EntryPointPluginFixture -Root $root
+        $fake = New-FakeCodexCli -Root $root
+        $oldPath = $env:PATH
+        $oldLog = $env:CODEX_TOOL_MANAGER_FAKE_LOG
+        try {
+            $env:PATH = "$($fake.Bin);$oldPath"
+            $env:CODEX_TOOL_MANAGER_FAKE_LOG = $fake.Log
+
+            $run = Invoke-EntryPointProcess -Arguments @(
+                'deploy', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist,
+                '-DryRun'
+            )
+        }
+        finally {
+            $env:PATH = $oldPath
+            if ($null -eq $oldLog) {
+                Remove-Item Env:\CODEX_TOOL_MANAGER_FAKE_LOG -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:CODEX_TOOL_MANAGER_FAKE_LOG = $oldLog
+            }
+        }
+
+        $run.ExitCode | Should Be 0
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Command | Should Be 'deploy'
+        $body.Status | Should Be 'succeeded'
+        @($body.Results)[0].Status | Should Be 'dry_run'
+        (Test-Path -LiteralPath $fake.Log -PathType Leaf) | Should Be $false
     }
 
     It 'deploy without an adapter reports blocked business failure' {
