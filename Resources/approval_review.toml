@@ -1,0 +1,301 @@
+schema_version = "1.0"
+
+[[reviews]]
+id = "plugin.openai-bundled.browser"
+name = "Browser"
+type = "plugin"
+source = "https://github.com/openai/openai/tree/master/lib/browser_use/plugin"
+version = "26.609.41114"
+license = "Proprietary"
+whitelist_status = "approved"
+implementation_method = "managed plugin install"
+primary_use = "Open and inspect local web targets through the Codex in-app browser."
+risk_level = "medium"
+risk_reason = "Browser automation can interact with local services and visible web content, but the plugin is already part of the approved phase 1 closed loop."
+verification_status = "Whitelist records local manifest SHA-256 evidence and managed rollback capability."
+recommended_action = "approve_now"
+recommendation_reason = "Already approved for phase 1 and directly supports frontend verification."
+approval_command_hint = "Keep deployment controlled by Resources/tool_whitelist.toml."
+dependencies = ["Codex plugin runtime"]
+permissions = ["browser automation", "local web target access when requested"]
+scenario_fit = ["local frontend verification", "browser screenshot and navigation checks"]
+
+[[reviews]]
+id = "mcp.modelcontextprotocol.filesystem"
+name = "Model Context Protocol Filesystem Server"
+type = "mcp"
+source = "https://github.com/modelcontextprotocol/servers.git"
+version = "0.6.3"
+license = "MIT/Apache-2.0 transition"
+whitelist_status = "proposed"
+implementation_method = "MCP stdio server package"
+primary_use = "Expose filesystem operations to MCP clients within configured roots."
+risk_level = "high"
+risk_reason = "Filesystem access can read and write project data, so root scoping and command boundaries need explicit review before approval."
+verification_status = "Whitelist records local package JSON SHA-256 evidence and upstream commit."
+recommended_action = "needs_review"
+recommendation_reason = "Review configured roots, write permissions, and rollback expectations before enabling."
+approval_command_hint = "Approve only after updating Resources/tool_whitelist.toml with reviewed scope notes."
+dependencies = ["Node.js", "modelcontextprotocol servers repository"]
+permissions = ["filesystem read", "filesystem write within configured roots"]
+scenario_fit = ["workspace file access", "controlled project automation"]
+
+[[reviews]]
+id = "mcp.modelcontextprotocol.memory"
+name = "Model Context Protocol Memory Server"
+type = "mcp"
+source = "https://github.com/modelcontextprotocol/servers.git"
+version = "0.6.3"
+license = "MIT/Apache-2.0 transition"
+whitelist_status = "proposed"
+implementation_method = "MCP stdio server package"
+primary_use = "Persist and retrieve structured memory across MCP sessions."
+risk_level = "medium"
+risk_reason = "Persistent memory can retain project facts or user-provided context, so retention policy and data boundaries should be reviewed."
+verification_status = "Whitelist records local package JSON SHA-256 evidence and upstream commit."
+recommended_action = "approve_later"
+recommendation_reason = "Useful after the minimal closed loop, but not required for immediate phase 1 execution."
+approval_command_hint = "Revisit through Resources/tool_whitelist.toml when memory retention policy is documented."
+dependencies = ["Node.js", "modelcontextprotocol servers repository"]
+permissions = ["persistent memory storage", "memory retrieval"]
+scenario_fit = ["long-running project context", "cross-session recall"]
+
+[[reviews]]
+id = "mcp.modelcontextprotocol.sequential-thinking"
+name = "Model Context Protocol Sequential Thinking Server"
+type = "mcp"
+source = "https://github.com/modelcontextprotocol/servers.git"
+version = "0.6.2"
+license = "MIT/Apache-2.0 transition"
+whitelist_status = "approved"
+implementation_method = "MCP stdio server package"
+primary_use = "Provide structured step-by-step reasoning support for complex tasks."
+risk_level = "medium"
+risk_reason = "Reasoning support has limited external side effects compared with filesystem or memory servers."
+verification_status = "Whitelist records local package JSON SHA-256 evidence, upstream commit, and managed rollback capability."
+recommended_action = "approve_now"
+recommendation_reason = "Already approved for phase 1 and supports planning without broad data access."
+approval_command_hint = "Keep deployment controlled by Resources/tool_whitelist.toml."
+dependencies = ["Node.js", "modelcontextprotocol servers repository"]
+permissions = ["stdio MCP interaction"]
+scenario_fit = ["complex task decomposition", "review and planning support"]
+
+[[reviews]]
+id = "skill.context-engineering.context-fundamentals"
+name = "Context Engineering Fundamentals"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+license = "UNKNOWN"
+whitelist_status = "approved"
+implementation_method = "managed skill install"
+primary_use = "Teach baseline context engineering concepts for agent workflows."
+risk_level = "low"
+risk_reason = "Skill content is instructional and already approved, with no direct tool execution surface."
+verification_status = "Whitelist records local skill source hash, upstream commit, and managed rollback capability."
+recommended_action = "approve_now"
+recommendation_reason = "Already approved and low risk for phase 1 use."
+approval_command_hint = "Keep deployment controlled by Resources/tool_whitelist.toml."
+dependencies = ["Codex skill loader"]
+permissions = ["read skill instructions"]
+scenario_fit = ["context design guidance", "agent workflow education"]
+
+[[reviews]]
+id = "skill.context-engineering.context-optimization"
+name = "Context Optimization"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+license = "UNKNOWN"
+whitelist_status = "proposed"
+implementation_method = "managed skill install"
+primary_use = "Guide prompt and context reduction practices."
+risk_level = "medium"
+risk_reason = "Instructional guidance can affect workflow quality, and the license is not yet identified in the whitelist."
+verification_status = "Whitelist records local skill source hash and upstream commit."
+recommended_action = "approve_later"
+recommendation_reason = "Potentially useful, but not required for the immediate approval baseline."
+approval_command_hint = "Resolve license status in Resources/tool_whitelist.toml before approval."
+dependencies = ["Codex skill loader"]
+permissions = ["read skill instructions"]
+scenario_fit = ["context compaction", "prompt budget management"]
+
+[[reviews]]
+id = "skill.context-engineering.context-compression"
+name = "Context Compression"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+license = "UNKNOWN"
+whitelist_status = "proposed"
+implementation_method = "managed skill install"
+primary_use = "Guide summarization and compression of working context."
+risk_level = "medium"
+risk_reason = "Instructional compression guidance can affect what information is preserved, and the license is not yet identified in the whitelist."
+verification_status = "Whitelist records local skill source hash and upstream commit."
+recommended_action = "approve_later"
+recommendation_reason = "Useful after the base workflow is stable, but not urgent for phase 1."
+approval_command_hint = "Resolve license status in Resources/tool_whitelist.toml before approval."
+dependencies = ["Codex skill loader"]
+permissions = ["read skill instructions"]
+scenario_fit = ["long-context summarization", "handoff preparation"]
+
+[[reviews]]
+id = "skill.context-engineering.filesystem-context"
+name = "Filesystem Context"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+license = "UNKNOWN"
+whitelist_status = "proposed"
+implementation_method = "managed skill install"
+primary_use = "Guide context collection from filesystem-backed projects."
+risk_level = "medium"
+risk_reason = "The skill may encourage broader filesystem inspection patterns, and the license is not yet identified in the whitelist."
+verification_status = "Whitelist records local skill source hash and upstream commit."
+recommended_action = "needs_review"
+recommendation_reason = "Review data minimization expectations before approving filesystem-oriented guidance."
+approval_command_hint = "Document filesystem review boundaries in Resources/tool_whitelist.toml before approval."
+dependencies = ["Codex skill loader"]
+permissions = ["read skill instructions"]
+scenario_fit = ["repository context gathering", "file-backed project analysis"]
+
+[[reviews]]
+id = "skill.context-engineering.tool-design"
+name = "Tool Design"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+license = "UNKNOWN"
+whitelist_status = "proposed"
+implementation_method = "managed skill install"
+primary_use = "Guide design of tool interfaces for agents."
+risk_level = "medium"
+risk_reason = "Instructional guidance can influence architecture choices, and the license is not yet identified in the whitelist."
+verification_status = "Whitelist records local skill source hash and upstream commit."
+recommended_action = "approve_later"
+recommendation_reason = "Relevant for future tool work, but not necessary for the current approval baseline."
+approval_command_hint = "Resolve license status in Resources/tool_whitelist.toml before approval."
+dependencies = ["Codex skill loader"]
+permissions = ["read skill instructions"]
+scenario_fit = ["tool API design", "agent integration planning"]
+
+[[reviews]]
+id = "skill.context-engineering.multi-agent-patterns"
+name = "Multi-Agent Patterns"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+license = "UNKNOWN"
+whitelist_status = "proposed"
+implementation_method = "managed skill install"
+primary_use = "Guide coordination patterns across multiple agents."
+risk_level = "medium"
+risk_reason = "Multi-agent guidance can increase workflow complexity, and the license is not yet identified in the whitelist."
+verification_status = "Whitelist records local skill source hash and upstream commit."
+recommended_action = "approve_later"
+recommendation_reason = "Potentially useful later, but phase 1 does not require multi-agent orchestration."
+approval_command_hint = "Resolve license status in Resources/tool_whitelist.toml before approval."
+dependencies = ["Codex skill loader"]
+permissions = ["read skill instructions"]
+scenario_fit = ["parallel agent workflows", "handoff design"]
+
+[[reviews]]
+id = "skill.context-engineering.harness-engineering"
+name = "Harness Engineering"
+type = "skill"
+source = "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git"
+version = "25e1fa79a33f0985793bcab3c64dde8d020c5132"
+license = "UNKNOWN"
+whitelist_status = "proposed"
+implementation_method = "managed skill install"
+primary_use = "Guide harness construction for repeatable agent evaluation."
+risk_level = "medium"
+risk_reason = "Harness guidance can affect execution workflows, and the license is not yet identified in the whitelist."
+verification_status = "Whitelist records local skill source hash and upstream commit."
+recommended_action = "approve_later"
+recommendation_reason = "Useful after deployment review matures, but not required for the initial approvals."
+approval_command_hint = "Resolve license status in Resources/tool_whitelist.toml before approval."
+dependencies = ["Codex skill loader"]
+permissions = ["read skill instructions"]
+scenario_fit = ["agent evaluation harnesses", "repeatable workflow testing"]
+
+[[reviews]]
+id = "plugin.openai-curated.superpowers"
+name = "Superpowers"
+type = "plugin"
+source = "https://github.com/obra/superpowers"
+version = "5.1.3"
+license = "MIT"
+whitelist_status = "approved"
+implementation_method = "managed plugin install"
+primary_use = "Provide disciplined agent workflows such as TDD, planning, and verification."
+risk_level = "medium"
+risk_reason = "Workflow instructions influence agent behavior, but the plugin is already approved and has managed rollback capability."
+verification_status = "Whitelist records local manifest SHA-256 evidence and managed rollback capability."
+recommended_action = "approve_now"
+recommendation_reason = "Already approved and directly supports required engineering process controls."
+approval_command_hint = "Keep deployment controlled by Resources/tool_whitelist.toml."
+dependencies = ["Codex plugin runtime"]
+permissions = ["read workflow skill instructions"]
+scenario_fit = ["TDD enforcement", "verification-before-completion", "structured planning"]
+
+[[reviews]]
+id = "plugin.openai-primary-runtime.documents"
+name = "Documents"
+type = "plugin"
+source = "https://github.com/openai/openai"
+version = "26.601.10930"
+license = "MIT"
+whitelist_status = "proposed"
+implementation_method = "managed plugin install"
+primary_use = "Create, edit, render, and verify document artifacts."
+risk_level = "medium"
+risk_reason = "Document generation can write artifacts and may process user-provided content."
+verification_status = "Whitelist records local manifest SHA-256 evidence."
+recommended_action = "approve_later"
+recommendation_reason = "Useful for document workflows but not required for phase 1 approval infrastructure."
+approval_command_hint = "Approve through Resources/tool_whitelist.toml when document artifact workflows are in scope."
+dependencies = ["Codex plugin runtime", "document rendering tools"]
+permissions = ["document artifact write", "document rendering"]
+scenario_fit = ["Word document creation", "document visual QA"]
+
+[[reviews]]
+id = "plugin.openai-primary-runtime.presentations"
+name = "Presentations"
+type = "plugin"
+source = "https://github.com/openai/openai"
+version = "26.601.10930"
+license = "MIT"
+whitelist_status = "proposed"
+implementation_method = "managed plugin install"
+primary_use = "Create, render, verify, and export presentation decks."
+risk_level = "medium"
+risk_reason = "Presentation generation can write artifacts and may process user-provided content."
+verification_status = "Whitelist records local manifest SHA-256 evidence."
+recommended_action = "approve_later"
+recommendation_reason = "Useful for deck workflows but not required for phase 1 approval infrastructure."
+approval_command_hint = "Approve through Resources/tool_whitelist.toml when presentation workflows are in scope."
+dependencies = ["Codex plugin runtime", "presentation rendering tools"]
+permissions = ["presentation artifact write", "slide rendering"]
+scenario_fit = ["PowerPoint deck creation", "slide visual QA"]
+
+[[reviews]]
+id = "plugin.openai-primary-runtime.spreadsheets"
+name = "Spreadsheets"
+type = "plugin"
+source = "https://github.com/openai/openai"
+version = "26.601.10930"
+license = "MIT"
+whitelist_status = "proposed"
+implementation_method = "managed plugin install"
+primary_use = "Create, edit, analyze, render, and export spreadsheet artifacts."
+risk_level = "medium"
+risk_reason = "Spreadsheet workflows can write artifacts, evaluate formulas, and process user-provided tabular data."
+verification_status = "Whitelist records local manifest SHA-256 evidence."
+recommended_action = "approve_later"
+recommendation_reason = "Useful for spreadsheet workflows but not required for phase 1 approval infrastructure."
+approval_command_hint = "Approve through Resources/tool_whitelist.toml when spreadsheet workflows are in scope."
+dependencies = ["Codex plugin runtime", "spreadsheet rendering tools"]
+permissions = ["spreadsheet artifact write", "formula recalculation"]
+scenario_fit = ["workbook creation", "tabular analysis", "spreadsheet visual QA"]
