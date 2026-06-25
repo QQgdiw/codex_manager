@@ -198,6 +198,41 @@ function ConvertTo-ManagerVerificationTool {
     }
 }
 
+function New-ManagerCodexExecutor {
+    param([int]$TimeoutSeconds = 120)
+
+    return {
+        param([object]$Command)
+
+        $filePath = Get-ProjectMember -InputObject $Command -Name 'FilePath'
+        $arguments = Get-ProjectMember -InputObject $Command -Name 'Arguments'
+        if (-not $filePath.Exists -or
+            [string]::IsNullOrWhiteSpace([string]$filePath.Value)) {
+            throw 'Managed command is missing FilePath.'
+        }
+
+        $argumentValues = if ($arguments.Exists) {
+            @($arguments.Value | ForEach-Object { [string]$_ })
+        }
+        else {
+            @()
+        }
+
+        $resolvedFilePath = [string]$filePath.Value
+        $resolvedCommand = Get-Command -Name $resolvedFilePath `
+            -CommandType Application `
+            -ErrorAction SilentlyContinue
+        if ($null -ne $resolvedCommand) {
+            $resolvedFilePath = [string]@($resolvedCommand)[0].Source
+        }
+
+        Invoke-ManagedProcess `
+            -FilePath $resolvedFilePath `
+            -Arguments $argumentValues `
+            -TimeoutSeconds $TimeoutSeconds
+    }.GetNewClosure()
+}
+
 function New-ManagerBlockedAdapter {
     param([string]$Type)
 
@@ -219,9 +254,88 @@ function New-ManagerBlockedAdapter {
     }.GetNewClosure()
 }
 
+function Add-ManagerPluginSnapshotDefaults {
+    param([object]$Item)
+
+    $snapshotMember = Get-ProjectMember -InputObject $Item -Name 'ApprovedSnapshot'
+    if (-not $snapshotMember.Exists -or $null -eq $snapshotMember.Value) {
+        return
+    }
+
+    $snapshot = $snapshotMember.Value
+    $marketplaceMember = Get-ProjectMember -InputObject $snapshot -Name 'marketplace_name'
+    $selectorMember = Get-ProjectMember -InputObject $snapshot -Name 'plugin_selector'
+    $marketplace = if ($marketplaceMember.Exists) {
+        [string]$marketplaceMember.Value
+    }
+    else {
+        $null
+    }
+    $selector = if ($selectorMember.Exists) {
+        [string]$selectorMember.Value
+    }
+    else {
+        $null
+    }
+
+    $idMember = Get-ProjectMember -InputObject $snapshot -Name 'id'
+    if (-not $idMember.Exists) {
+        $idMember = Get-ProjectMember -InputObject $Item -Name 'Id'
+    }
+    if ($idMember.Exists -and [string]$idMember.Value -match '^plugin\.(.+)\.([^.]+)$') {
+        if ([string]::IsNullOrWhiteSpace($marketplace)) {
+            $marketplace = $matches[1]
+        }
+        if ([string]::IsNullOrWhiteSpace($selector)) {
+            $selector = $matches[2]
+        }
+    }
+
+    $targetMember = Get-ProjectMember -InputObject $snapshot -Name 'install_target'
+    if (-not $targetMember.Exists) {
+        $targetMember = Get-ProjectMember -InputObject $Item -Name 'Target'
+    }
+    if ($targetMember.Exists -and
+        [string]$targetMember.Value -match '(?i)(?:^|[\\/])Plugins[\\/]([^\\/]+)[\\/]([^\\/]+)(?:[\\/]|$)') {
+        if ([string]::IsNullOrWhiteSpace($marketplace)) {
+            $marketplace = $matches[1]
+        }
+        if ([string]::IsNullOrWhiteSpace($selector)) {
+            $selector = $matches[2]
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($marketplace)) {
+        $snapshot | Add-Member -NotePropertyName 'marketplace_name' `
+            -NotePropertyValue $marketplace -Force
+    }
+    if (-not [string]::IsNullOrWhiteSpace($selector)) {
+        $snapshot | Add-Member -NotePropertyName 'plugin_selector' `
+            -NotePropertyValue $selector -Force
+    }
+}
+
+function New-ManagerPluginAdapter {
+    param([scriptblock]$Executor)
+
+    return {
+        param([object]$Item)
+
+        Add-ManagerPluginSnapshotDefaults -Item $Item
+        $plan = Get-PluginInstallPlan -Tool $Item
+        Install-ManagedPlugin -Plan $plan -Executor $Executor
+    }.GetNewClosure()
+}
+
 function New-ManagerAdapterMap {
+    param([AllowNull()][scriptblock]$Executor)
+
+    if ($null -eq $Executor) {
+        $Executor = New-ManagerCodexExecutor
+    }
+
     $map = @{}
-    $map['plugin'] = New-ManagerBlockedAdapter -Type 'plugin'
+    $map['plugin'] = New-ManagerPluginAdapter -Executor $Executor
     $map['mcp'] = New-ManagerBlockedAdapter -Type 'mcp'
     $map['skill'] = New-ManagerBlockedAdapter -Type 'skill'
     return $map

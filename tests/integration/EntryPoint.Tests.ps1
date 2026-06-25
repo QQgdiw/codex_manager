@@ -157,16 +157,16 @@ function New-FakeCodexCli {
     $script = Join-Path $bin 'codex.cmd'
     Set-Content -LiteralPath $script -Encoding ASCII -Value @"
 @echo off
-echo %*>>"%CODEX_TOOL_MANAGER_FAKE_LOG%"
-if "%1"=="plugin" if "%2"=="marketplace" if "%3"=="add" (
+echo %~1 %~2 %~3 %~4 %~5 %~6 %~7>>"%CODEX_TOOL_MANAGER_FAKE_LOG%"
+if "%~1"=="plugin" if "%~2"=="marketplace" if "%~3"=="add" (
   echo {"ok":true}
   exit /b 0
 )
-if "%1"=="plugin" if "%2"=="add" (
+if "%~1"=="plugin" if "%~2"=="add" (
   echo {"ok":true}
   exit /b 0
 )
-if "%1"=="plugin" if "%2"=="list" (
+if "%~1"=="plugin" if "%~2"=="list" (
   echo [{"plugin":"browser","marketplace":"openai-bundled"},{"plugin":"superpowers","marketplace":"openai-curated"}]
   exit /b 0
 )
@@ -353,6 +353,40 @@ Describe 'Codex tool manager entry point' {
         $body.Status | Should Be 'blocked'
         @($body.Results)[0].Status | Should Be 'blocked'
         @($body.Results)[0].Message | Should Match 'adapter'
+    }
+
+    It 'deploys an approved plugin through the Codex plugin adapter' {
+        $root = Join-Path $TestDrive 'plugin-deploy'
+        $fixture = New-EntryPointPluginFixture -Root $root
+        $fake = New-FakeCodexCli -Root $root
+        $oldPath = $env:PATH
+        $oldLog = $env:CODEX_TOOL_MANAGER_FAKE_LOG
+        try {
+            $env:PATH = "$($fake.Bin);$oldPath"
+            $env:CODEX_TOOL_MANAGER_FAKE_LOG = $fake.Log
+
+            $run = Invoke-EntryPointProcess -Arguments @(
+                'deploy', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist
+            )
+        }
+        finally {
+            $env:PATH = $oldPath
+            if ($null -eq $oldLog) {
+                Remove-Item Env:\CODEX_TOOL_MANAGER_FAKE_LOG -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:CODEX_TOOL_MANAGER_FAKE_LOG = $oldLog
+            }
+        }
+
+        $run.ExitCode | Should Be 0
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Command | Should Be 'deploy'
+        $body.Status | Should Be 'succeeded'
+        @($body.Results)[0].Status | Should Be 'succeeded'
+        $log = Get-Content -LiteralPath $fake.Log -Raw
+        $log | Should Match 'plugin marketplace add'
+        $log | Should Match 'plugin add browser@openai-bundled'
     }
 
     It 'verify is conservative when no load or smoke verifier is present' {
