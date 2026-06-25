@@ -100,3 +100,10 @@
 - `Resources/event_market.md` 已从泛 AI 行业事件改为工程工作流事件市场；模型训练、微调、榜单和仅强调模型能力的旧版本发布不再作为主事件。
 - 本轮验证：全量测试 287 passed、0 failed；`Resources/*.toml` 全部可解析；`git diff --check` 通过；精确敏感 token 扫描无命中。
 - PowerShell 5.1 直接执行无 BOM 中文脚本会触发编码解析问题；后续涉及中文文本生成的临时脚本优先使用 Python 或确保 PowerShell 脚本编码明确。
+
+## 2026-06-25：第二批白名单审批
+
+- 用户批准 `approval_review.md` 中建议动作为 `approve_now` 和 `needs_review` 的条目。
+- 新增批准 `mcp.modelcontextprotocol.filesystem` 和 `skill.context-engineering.filesystem-context`；白名单当前共有 6 个 `approved` 工具。
+- 文件系统相关条目虽然已批准，但真实部署时仍必须执行根目录约束、写入范围约束、数据最小化、静态验证、加载验证、最小功能调用验证和失败回滚记录。
+- 验证结果：`Resources/tool_whitelist.toml` 与 `Resources/approval_review.toml` 均可解析；单元测试 267 passed、0 failed；`git diff --check` 通过。

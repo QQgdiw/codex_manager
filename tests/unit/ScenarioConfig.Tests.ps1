@@ -132,7 +132,7 @@ Describe 'Scenario config profiles' {
         $approvedCount = @(
             $script:whitelist.tools | Where-Object { $_.approval -eq 'approved' }
         ).Count
-        $approvedCount | Should Be 4
+        $approvedCount | Should Be 6
 
         foreach ($file in $script:scenarioFiles) {
             $config = Read-ProjectToml -Path (Join-Path $projectRoot "Resources\$file")

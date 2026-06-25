@@ -43,12 +43,16 @@ Describe 'Test-WhitelistDocument' {
                 Where-Object { $_.approval -eq 'approved' } |
                 ForEach-Object { $_.id }
         )
-        @($approvedIds).Count | Should Be 4
+        @($approvedIds).Count | Should Be 6
         ($approvedIds -contains 'plugin.openai-bundled.browser') | Should Be $true
         ($approvedIds -contains 'plugin.openai-curated.superpowers') | Should Be $true
+        ($approvedIds -contains 'mcp.modelcontextprotocol.filesystem') |
+            Should Be $true
         ($approvedIds -contains 'mcp.modelcontextprotocol.sequential-thinking') |
             Should Be $true
         ($approvedIds -contains 'skill.context-engineering.context-fundamentals') |
+            Should Be $true
+        ($approvedIds -contains 'skill.context-engineering.filesystem-context') |
             Should Be $true
     }
 

@@ -10,6 +10,8 @@
 
 2026-06-25 已完成市场与审批强化：`Resources/approval_review.toml` 和 `Resources/approval_review.md` 提供面向后续可视化的审批辅助数据；`Resources/plugins_market.md` 已按本地缓存、CLI 和 GitHub `openai/plugins` 来源重建；`Resources/github_market.md` 已扩展为 2026-W01 至 2026-W26 的工程候选池，并记录 `stars >= 1000`、近似回溯、跨周去重和候选不足周；`Resources/event_market.md` 已从泛 AI 行业事件改为工程工作流事件市场。
 
+2026-06-25 用户批准 `approval_review.md` 中建议动作为 `approve_now` 和 `needs_review` 的条目，当前白名单共有 6 个 `approved` 工具；其中 `mcp.modelcontextprotocol.filesystem` 和 `skill.context-engineering.filesystem-context` 虽已批准，但真实部署必须继续执行文件系统根目录、写入范围、数据最小化和回滚边界约束。
+
 ## 首期范围
 
 - 首次填充并按需增量维护五类市场文档。

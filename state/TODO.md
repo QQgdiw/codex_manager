@@ -19,6 +19,7 @@
 - [x] 确认现有 MCP 和 Skills 纳入统一管理与验证。
 - [x] 建立项目状态文件。
 - [x] 建立结构化审批辅助表 `Resources/approval_review.toml` 和人类可读审批摘要 `Resources/approval_review.md`。
+- [x] 按用户批准，将 `approve_now` 和 `needs_review` 对应白名单条目更新为 `approved`，当前批准工具数为 6。
 - [x] 重建 `Resources/plugins_market.md`，记录本地缓存、CLI 和 GitHub `openai/plugins` 来源差异。
 - [x] 扩展 `Resources/github_market.md` 为 2026-W01 至 2026-W26 工程候选池，并实现跨周去重规则说明。
 - [x] 重写 `Resources/event_market.md`，从泛 AI 行业事件调整为工程工作流事件市场。
