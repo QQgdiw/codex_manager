@@ -90,3 +90,13 @@
 - 敏感内容扫描未发现交付记录中的明文凭据；命中项仅包括 `TODO.md` 文件名、PP 中的扫描命令样例和脚本变量 `$token`。
 - PRD 覆盖核对：五类市场文档、六类场景配置、TOML 白名单、审批记录、部署 dry-run、分层验证、回滚、DPAPI、状态记录和后续路线均已有对应实现、文档或明确限制。
 - 剩余限制：真实部署适配器和 load/smoke verifier 尚未接入，当前首期闭环只能证明计划、dry-run、静态验证和阻塞边界。
+
+## 2026-06-25：市场与审批强化
+
+- 审批辅助数据改为 TOML 主数据源，新增 `Resources/approval_review.toml` 和 `Resources/approval_review.md`；白名单部署权威仍是 `Resources/tool_whitelist.toml`。
+- `Resources/plugins_market.md` 已重建，记录 CLI、本地插件缓存与 GitHub `openai/plugins` 之间的来源差异；`/plugins` UI 的 177 项仍属于人工观察口径，不能当作已程序化采集事实。
+- `Resources/github_market.md` 使用 GitHub Search API 近似回溯 2026-W01 至 2026-W26，硬过滤 `stars >= 1000`，当前共收录 638 个唯一仓库。2026-W19、W21、W22、W23、W24、W25、W26 因满足条件的唯一工程候选不足而低于 20 个。
+- GitHub 市场必须跨周去重：若仓库已在更早 week 收录，后续 week 跳过且不计入 20-30 个目标名额。本次按 `created_at` 周切分后未出现跨周重复，但规则和说明已写入生成逻辑与文档。
+- `Resources/event_market.md` 已从泛 AI 行业事件改为工程工作流事件市场；模型训练、微调、榜单和仅强调模型能力的旧版本发布不再作为主事件。
+- 本轮验证：全量测试 287 passed、0 failed；`Resources/*.toml` 全部可解析；`git diff --check` 通过；精确敏感 token 扫描无命中。
+- PowerShell 5.1 直接执行无 BOM 中文脚本会触发编码解析问题；后续涉及中文文本生成的临时脚本优先使用 Python 或确保 PowerShell 脚本编码明确。

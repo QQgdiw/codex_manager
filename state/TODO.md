@@ -1,6 +1,6 @@
 # 项目任务状态
 
-> **更新时间**：2026-06-13
+> **更新时间**：2026-06-25
 
 ## 已完成
 
@@ -18,6 +18,11 @@
 - [x] 验证用户级 Codex `auth.json` 可用于沙箱外认证。
 - [x] 确认现有 MCP 和 Skills 纳入统一管理与验证。
 - [x] 建立项目状态文件。
+- [x] 建立结构化审批辅助表 `Resources/approval_review.toml` 和人类可读审批摘要 `Resources/approval_review.md`。
+- [x] 重建 `Resources/plugins_market.md`，记录本地缓存、CLI 和 GitHub `openai/plugins` 来源差异。
+- [x] 扩展 `Resources/github_market.md` 为 2026-W01 至 2026-W26 工程候选池，并实现跨周去重规则说明。
+- [x] 重写 `Resources/event_market.md`，从泛 AI 行业事件调整为工程工作流事件市场。
+- [x] 完成市场与审批强化验收：全量测试、TOML 解析、敏感 token 扫描和 Git 空白检查。
 
 ## 下一阶段
 
@@ -31,6 +36,8 @@
 - [x] 执行首批 approved 工具的部署 dry-run 和静态分层验证。
 - [x] 完成首期端到端验收：全量测试、TOML 解析、敏感内容扫描和 PRD 覆盖核对。
 - [ ] 接入真实部署适配器和 load/smoke verifier；当前入口仍为 planning-only，尚未完成真实安装。
+- [ ] 后续如做审批可视化，应以 `Resources/approval_review.toml` 为数据源，而不是解析 Markdown。
+- [ ] 下一次更新 `Resources/github_market.md` 时继续执行跨周去重，已收录仓库不参与后续周榜名额。
 
 ## 后续路线
 
