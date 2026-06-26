@@ -21,6 +21,7 @@ function New-EntryPointFixture {
         [string]$Root,
         [string]$Approval = 'approved',
         [string]$ToolId = 'skill.entry',
+        [string]$ToolType = 'skill',
         [string]$Target = $null
     )
 
@@ -41,7 +42,7 @@ schema_version = "1.0"
 [[tools]]
 id = "$ToolId"
 name = "Entry Point Skill"
-type = "skill"
+type = "$ToolType"
 source = "https://example.invalid/entrypoint"
 version = "v1.0.0"
 sha256 = "$hash"
@@ -438,8 +439,28 @@ Describe 'Codex tool manager entry point' {
         (Test-Path -LiteralPath $fixture.Target) | Should Be $false
     }
 
+    It 'deploys an approved skill through the managed Skill adapter' {
+        $fixture = New-EntryPointSkillFixture -Root (Join-Path $TestDrive 'skill-deploy')
+
+        $run = Invoke-EntryPointProcess -Arguments @(
+            'deploy', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist
+        )
+
+        $run.ExitCode | Should Be 0
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Command | Should Be 'deploy'
+        $body.Status | Should Be 'succeeded'
+        @($body.Results)[0].Status | Should Be 'succeeded'
+        (Test-Path -LiteralPath (Join-Path $fixture.Target 'SKILL.md') -PathType Leaf) |
+            Should Be $true
+        (Test-Path -LiteralPath (Join-Path $fixture.Target 'docs\usage.md') -PathType Leaf) |
+            Should Be $true
+    }
+
     It 'deploy without an adapter reports blocked business failure' {
-        $fixture = New-EntryPointFixture -Root (Join-Path $TestDrive 'deploy-blocked')
+        $fixture = New-EntryPointFixture -Root (Join-Path $TestDrive 'deploy-blocked') `
+            -ToolId 'mcp.entry' `
+            -ToolType 'mcp'
 
         $run = Invoke-EntryPointProcess -Arguments @(
             'deploy', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist

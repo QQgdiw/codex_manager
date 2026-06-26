@@ -118,6 +118,89 @@ Describe 'Deployment plan construction and validation' {
         (Test-DeploymentPlan -Plan $plan).IsValid | Should Be $true
     }
 
+    It 'preserves only plugin-specific approved fields for plugin snapshots' {
+        $tool = New-TestTool -Id 'skill.a'
+        $tool.type = 'plugin'
+        $tool | Add-Member -NotePropertyName 'marketplace_name' `
+            -NotePropertyValue 'openai-curated'
+        $tool | Add-Member -NotePropertyName 'plugin_selector' `
+            -NotePropertyValue 'superpowers'
+        $tool | Add-Member -NotePropertyName 'skill_id' `
+            -NotePropertyValue 'context-fundamentals'
+        $tool | Add-Member -NotePropertyName 'source_path' `
+            -NotePropertyValue 'E:\codex\Skills\context-fundamentals'
+        $tool | Add-Member -NotePropertyName 'managed_workspace_root' `
+            -NotePropertyValue 'E:\codex'
+        $tool | Add-Member -NotePropertyName 'skill_manifest' `
+            -NotePropertyValue 'SKILL.md'
+
+        $plan = New-DeploymentPlan `
+            -Config (New-TestConfig @('skill.a')) `
+            -Whitelist (New-TestWhitelist @($tool)) `
+            -CredentialMetadata @()
+
+        $snapshot = $plan.Items[0].ApprovedSnapshot
+        $snapshot.marketplace_name | Should Be 'openai-curated'
+        $snapshot.plugin_selector | Should Be 'superpowers'
+        $snapshot.PSObject.Properties['skill_id'] | Should Be $null
+        $snapshot.PSObject.Properties['source_path'] | Should Be $null
+        $snapshot.PSObject.Properties['managed_workspace_root'] | Should Be $null
+        $snapshot.PSObject.Properties['skill_manifest'] | Should Be $null
+        (Test-DeploymentPlan -Plan $plan).IsValid | Should Be $true
+    }
+
+    It 'preserves only skill-specific approved fields for skill snapshots' {
+        $tool = New-TestTool -Id 'skill.a'
+        $tool | Add-Member -NotePropertyName 'marketplace_name' `
+            -NotePropertyValue 'openai-curated'
+        $tool | Add-Member -NotePropertyName 'plugin_selector' `
+            -NotePropertyValue 'superpowers'
+        $tool | Add-Member -NotePropertyName 'skill_id' `
+            -NotePropertyValue 'skill.a'
+        $tool | Add-Member -NotePropertyName 'source_path' `
+            -NotePropertyValue 'E:\codex\Skills\skill.a'
+        $tool | Add-Member -NotePropertyName 'managed_workspace_root' `
+            -NotePropertyValue 'E:\codex'
+        $tool | Add-Member -NotePropertyName 'skill_manifest' `
+            -NotePropertyValue 'SKILL.md'
+
+        $plan = New-DeploymentPlan `
+            -Config (New-TestConfig @('skill.a')) `
+            -Whitelist (New-TestWhitelist @($tool)) `
+            -CredentialMetadata @()
+
+        $snapshot = $plan.Items[0].ApprovedSnapshot
+        $snapshot.PSObject.Properties['marketplace_name'] | Should Be $null
+        $snapshot.PSObject.Properties['plugin_selector'] | Should Be $null
+        $snapshot.skill_id | Should Be 'skill.a'
+        $snapshot.source_path | Should Be 'E:\codex\Skills\skill.a'
+        $snapshot.managed_workspace_root | Should Be 'E:\codex'
+        $snapshot.skill_manifest | Should Be 'SKILL.md'
+        (Test-DeploymentPlan -Plan $plan).IsValid | Should Be $true
+    }
+
+    It 'rejects skill snapshots whose install target does not match skill_id' {
+        $tool = New-TestTool -Id 'skill.a'
+        $tool.install_target = 'Skills/other-skill'
+        $tool | Add-Member -NotePropertyName 'skill_id' -NotePropertyValue 'skill.a'
+        $tool | Add-Member -NotePropertyName 'source_path' `
+            -NotePropertyValue 'E:\codex\Skills\skill.a'
+        $tool | Add-Member -NotePropertyName 'managed_workspace_root' `
+            -NotePropertyValue 'E:\codex'
+        $tool | Add-Member -NotePropertyName 'skill_manifest' `
+            -NotePropertyValue 'SKILL.md'
+
+        $plan = New-DeploymentPlan `
+            -Config (New-TestConfig @('skill.a')) `
+            -Whitelist (New-TestWhitelist @($tool)) `
+            -CredentialMetadata @()
+        $validation = Test-DeploymentPlan -Plan $plan
+
+        $validation.IsValid | Should Be $false
+        Get-TestErrorText $validation | Should Match 'install_target'
+        Get-TestErrorText $validation | Should Match 'skill_id'
+    }
+
     It 'rejects every approval state other than approved' {
         foreach ($approval in @('proposed', 'rejected', 'suspended')) {
             $plan = New-DeploymentPlan `

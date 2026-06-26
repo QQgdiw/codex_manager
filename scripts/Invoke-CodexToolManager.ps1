@@ -353,6 +353,15 @@ function New-ManagerPluginLoadVerifier {
     }.GetNewClosure()
 }
 
+function New-ManagerSkillAdapter {
+    return {
+        param([object]$Item)
+
+        $plan = Get-SkillInstallPlan -Tool $Item
+        Install-ManagedSkill -Plan $plan
+    }.GetNewClosure()
+}
+
 function New-ManagerAdapterMap {
     param([AllowNull()][scriptblock]$Executor)
 
@@ -363,7 +372,7 @@ function New-ManagerAdapterMap {
     $map = @{}
     $map['plugin'] = New-ManagerPluginAdapter -Executor $Executor
     $map['mcp'] = New-ManagerBlockedAdapter -Type 'mcp'
-    $map['skill'] = New-ManagerBlockedAdapter -Type 'skill'
+    $map['skill'] = New-ManagerSkillAdapter
     return $map
 }
 

@@ -131,7 +131,7 @@ function New-DeploymentApprovedSnapshot {
         [object]$RollbackCapability
     )
 
-    return [pscustomobject][ordered]@{
+    $snapshot = [ordered]@{
         id = $Id
         name = Copy-DeploymentValue -Value (
             Get-DeploymentMember -InputObject $Tool -Name 'name'
@@ -167,6 +167,29 @@ function New-DeploymentApprovedSnapshot {
         external_changes = Copy-DeploymentArraySnapshot -Value $ExternalChanges
         rollback_capability = Copy-DeploymentValue -Value $RollbackCapability
     }
+
+    $adapterFields = @()
+    $type = (Get-DeploymentMember -InputObject $Tool -Name 'type').Value
+    if ($type -eq 'plugin') {
+        $adapterFields = @('marketplace_name', 'plugin_selector', 'plugin_id')
+    }
+    elseif ($type -eq 'skill') {
+        $adapterFields = @(
+            'skill_id',
+            'source_path',
+            'managed_workspace_root',
+            'skill_manifest'
+        )
+    }
+
+    foreach ($field in $adapterFields) {
+        $member = Get-DeploymentMember -InputObject $Tool -Name $field
+        if ($member.Exists) {
+            $snapshot[$field] = Copy-DeploymentValue -Value $member.Value
+        }
+    }
+
+    return [pscustomobject]$snapshot
 }
 
 function Add-DeploymentValidationError {
@@ -465,6 +488,18 @@ function Add-DeploymentSnapshotMismatch {
         "Deployment plan item '$ItemId' field '$Field' does not match " +
         'the ApprovedSnapshot.'
     )
+}
+
+function Get-DeploymentNormalizedInstallTarget {
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($Value -isnot [string]) {
+        return $null
+    }
+    return $Value.Replace('\', '/').Trim('/')
 }
 
 function New-DeploymentPlan {
@@ -990,6 +1025,25 @@ function Test-DeploymentPlan {
                         -Right $snapshotValue)) {
                     Add-DeploymentSnapshotMismatch -Errors $errors `
                         -ItemId $labelId -Field $itemField
+                }
+            }
+
+            $skillIdMember = Get-DeploymentMember -InputObject $approvedSnapshot `
+                -Name 'skill_id'
+            if ($type -eq 'skill' -and $skillIdMember.Exists -and
+                $skillIdMember.Value -is [string] -and
+                -not [string]::IsNullOrWhiteSpace($skillIdMember.Value)) {
+                $actualTarget = Get-DeploymentNormalizedInstallTarget -Value (
+                    Get-DeploymentMember -InputObject $item -Name 'Target'
+                ).Value
+                $expectedTarget = Get-DeploymentNormalizedInstallTarget -Value (
+                    "Skills/$($skillIdMember.Value)"
+                )
+                if ($actualTarget -cne $expectedTarget) {
+                    Add-DeploymentValidationError -Errors $errors -Message (
+                        "Deployment plan item '$labelId' install_target " +
+                        "must match skill_id as '$expectedTarget'."
+                    )
                 }
             }
         }
