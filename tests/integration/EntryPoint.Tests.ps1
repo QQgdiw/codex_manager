@@ -508,7 +508,10 @@ Describe 'Codex tool manager entry point' {
     }
 
     It 'verify is conservative when no load or smoke verifier is present' {
-        $fixture = New-EntryPointFixture -Root (Join-Path $TestDrive 'verify')
+        $fixture = New-EntryPointFixture `
+            -Root (Join-Path $TestDrive 'verify') `
+            -ToolId 'mcp.entry' `
+            -ToolType 'mcp'
 
         $run = Invoke-EntryPointProcess -Arguments @(
             'verify', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist
@@ -562,6 +565,29 @@ Describe 'Codex tool manager entry point' {
             Should Be 'blocked'
         $log = Get-Content -LiteralPath $fake.Log -Raw
         $log | Should Match 'plugin list --json'
+    }
+
+    It 'verifies an approved managed skill through installed content hash' {
+        $fixture = New-EntryPointSkillFixture -Root (Join-Path $TestDrive 'skill-verify')
+        $deployRun = Invoke-EntryPointProcess -Arguments @(
+            'deploy', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist
+        )
+        $deployRun.ExitCode | Should Be 0
+
+        $run = Invoke-EntryPointProcess -Arguments @(
+            'verify', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist
+        )
+
+        $run.ExitCode | Should Be 1
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Command | Should Be 'verify'
+        $body.Status | Should Be 'blocked'
+        @($body.Results | Where-Object { $_.Level -eq 'static' })[0].Status |
+            Should Be 'static_verified'
+        @($body.Results | Where-Object { $_.Level -eq 'load' })[0].Status |
+            Should Be 'load_verified'
+        @($body.Results | Where-Object { $_.Level -eq 'smoke' })[0].Status |
+            Should Be 'blocked'
     }
 
     It 'credential commands do not print plaintext secrets' {

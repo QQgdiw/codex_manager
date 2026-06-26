@@ -210,6 +210,11 @@ function ConvertTo-ManagerVerificationTool {
             -NotePropertyValue (New-ManagerPluginLoadVerifier -Executor $Executor)
     }
 
+    if ($Item.Type -eq 'skill') {
+        $tool | Add-Member -NotePropertyName LoadVerifier `
+            -NotePropertyValue (New-ManagerSkillLoadVerifier)
+    }
+
     return $tool
 }
 
@@ -359,6 +364,22 @@ function New-ManagerSkillAdapter {
 
         $plan = Get-SkillInstallPlan -Tool $Item
         Install-ManagedSkill -Plan $plan
+    }.GetNewClosure()
+}
+
+function New-ManagerSkillLoadVerifier {
+    return {
+        param([object]$Tool)
+
+        $plan = Get-SkillInstallPlan -Tool $Tool
+        Test-ManagedSkill -Plan $plan -Verifier {
+            param($VerifierPlan)
+            [pscustomobject]@{
+                Status = 'load_verified'
+                Message = "Managed Skill '$($VerifierPlan.SkillId)' content hash and manifest were verified."
+                Checks = @('managed skill directory, SKILL.md, and source hash verified')
+            }
+        }
     }.GetNewClosure()
 }
 
