@@ -115,3 +115,11 @@
 - `verify` 已为 plugin 附加 load verifier，通过 `codex plugin list --json` 检查插件是否可见；smoke verification 仍因缺少功能性 verifier 保守阻塞。
 - Skill 和 MCP 仍保持 blocked adapter，未进入真实安装或加载验证。
 - TDD 证据：plugin deploy RED 为 21 passed / 1 failed，GREEN 为 22 passed / 0 failed；plugin verify RED 为 22 passed / 1 failed，GREEN 为 23 passed / 0 failed；相关单元测试均为 267 passed / 0 failed。
+
+## 2026-06-26：Skill 真实部署与 load 验证最小闭环
+
+- `skill` 类型已从 blocked adapter 切换到真实 `Install-ManagedSkill`；测试使用临时 Skill source 和临时 workspace，不写入真实 `E:\codex\Skills`。
+- `New-DeploymentApprovedSnapshot` 现在按工具类型保留 adapter-specific 字段：plugin 仅保留 plugin 字段，skill 仅保留 `skill_id`、`source_path`、`managed_workspace_root` 和 `skill_manifest`，避免跨适配器字段污染。
+- `Test-DeploymentPlan` 会在 skill approved snapshot 含 `skill_id` 时校验 `install_target` 必须匹配 `Skills/<skill_id>`，防止计划目标和实际受管安装目录不一致。
+- `verify` 已为 skill 附加 load verifier，通过受管安装目录、`SKILL.md` 和源内容 hash 验证；smoke verification 仍保守阻塞，不能宣称 Codex 运行时已实际加载并执行 Skill。
+- TDD 证据：Skill fixture 24 passed / 0 failed；Skill deploy RED 为 24 passed / 1 failed，修复后 integration 为 25 passed / 0 failed，unit 为 270 passed / 0 failed；Skill verify RED 为 25 passed / 1 failed，GREEN 为 26 passed / 0 failed，unit 为 270 passed / 0 failed。

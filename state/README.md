@@ -62,3 +62,4 @@
 - Task 19 最终验收：全量测试 284 passed / 0 failed；所有 `Resources/*.toml` 可解析；敏感扫描未发现交付记录中的明文凭据；PRD 覆盖项均有实现、记录或明确限制。
 - 2026-06-25 市场与审批强化最终验收：全量测试 287 passed / 0 failed；所有 `Resources/*.toml` 可解析；精确敏感 token 扫描无命中。
 - 2026-06-25 插件真实部署与验证最小闭环：入口已对 plugin 类型接入真实 Codex CLI executor、`Install-ManagedPlugin` 和 `Test-ManagedPlugin` load verifier；Skill/MCP 仍 blocked；插件 smoke verifier 尚未实现。
+- 2026-06-26 Skill 真实部署与 load verification 最小闭环：入口已对 skill 类型接入 `Install-ManagedSkill` 和 `Test-ManagedSkill` load verifier；MCP 仍 blocked；Skill smoke verifier 尚未实现，不能宣称 Codex 运行时已实际加载并执行 Skill。
