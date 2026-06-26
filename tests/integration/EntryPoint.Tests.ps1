@@ -113,6 +113,87 @@ plugin_selector = "$Selector"
     }
 }
 
+function New-EntryPointSkillSource {
+    param(
+        [string]$Root,
+        [string]$SkillId = 'entry-skill'
+    )
+
+    $source = Join-Path $Root "source-$SkillId"
+    New-Item -ItemType Directory -Path $source -Force | Out-Null
+    Write-EntryPointTextFile -Path (Join-Path $source 'SKILL.md') -Text @"
+---
+name: Entry Skill
+description: Entry point integration test skill.
+---
+
+# Entry Skill
+
+This is an integration-test-only skill.
+"@
+    New-Item -ItemType Directory -Path (Join-Path $source 'docs') -Force | Out-Null
+    Write-EntryPointTextFile -Path (Join-Path $source 'docs\usage.md') -Text 'Usage.'
+    return $source
+}
+
+function New-EntryPointSkillFixture {
+    param(
+        [string]$Root,
+        [string]$ToolId = 'skill.entry-skill',
+        [string]$SkillId = 'entry-skill'
+    )
+
+    $source = New-EntryPointSkillSource -Root $Root -SkillId $SkillId
+    $workspace = Join-Path $Root 'workspace'
+    New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+    $hashRun = & powershell -NoProfile -ExecutionPolicy Bypass -Command (
+        ". '$projectRoot\scripts\lib\adapters\SkillAdapter.ps1'; " +
+        "Get-SkillSourceHash -SourcePath '$($source.Replace("'", "''"))'"
+    )
+    $hash = [string]($hashRun | Select-Object -Last 1)
+    $configPath = Join-Path $Root 'config.toml'
+    $whitelistPath = Join-Path $Root 'whitelist.toml'
+    Write-EntryPointTextFile -Path $configPath -Text @"
+schema_version = 1
+name = "skill-entrypoint"
+enabled_tools = ["$ToolId"]
+"@
+    Write-EntryPointTextFile -Path $whitelistPath -Text @"
+schema_version = "1.0"
+
+[[tools]]
+id = "$ToolId"
+name = "Entry Skill"
+type = "skill"
+source = "local"
+version = "1.0.0"
+sha256 = "$hash"
+license = "MIT"
+approval = "approved"
+risk = "low"
+install_target = "Skills/$SkillId"
+credential_refs = []
+conflicts = []
+dependencies = []
+permissions = []
+external_changes = []
+rollback_capability = "managed_files"
+skill_id = "$SkillId"
+source_path = "$($source.Replace('\', '\\'))"
+managed_workspace_root = "$($workspace.Replace('\', '\\'))"
+skill_manifest = "SKILL.md"
+"@
+
+    return [pscustomobject]@{
+        Config = $configPath
+        Whitelist = $whitelistPath
+        Source = $source
+        Workspace = $workspace
+        Target = (Join-Path $workspace "Skills\$SkillId")
+        SkillId = $SkillId
+    }
+}
+
 function Invoke-EntryPointProcess {
     param([string[]]$Arguments)
 
@@ -339,6 +420,22 @@ Describe 'Codex tool manager entry point' {
         $body.Status | Should Be 'succeeded'
         @($body.Results)[0].Status | Should Be 'dry_run'
         (Test-Path -LiteralPath $fake.Log -PathType Leaf) | Should Be $false
+    }
+
+    It 'keeps approved skill deploy dry-run from copying files' {
+        $fixture = New-EntryPointSkillFixture -Root (Join-Path $TestDrive 'skill-dryrun')
+
+        $run = Invoke-EntryPointProcess -Arguments @(
+            'deploy', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist,
+            '-DryRun'
+        )
+
+        $run.ExitCode | Should Be 0
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Command | Should Be 'deploy'
+        $body.Status | Should Be 'succeeded'
+        @($body.Results)[0].Status | Should Be 'dry_run'
+        (Test-Path -LiteralPath $fixture.Target) | Should Be $false
     }
 
     It 'deploy without an adapter reports blocked business failure' {
