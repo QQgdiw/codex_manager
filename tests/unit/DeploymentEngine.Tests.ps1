@@ -193,6 +193,11 @@ Describe 'Deployment plan construction and validation' {
                 args = @('dist/index.js')
                 working_directory = 'E:\codex\MCP\servers\src\entry'
             })
+        $tool | Add-Member -NotePropertyName 'http' `
+            -NotePropertyValue ([pscustomobject]@{
+                url = 'https://mcp.example.test/sse'
+                bearer_token_env_var = 'MCP_ENTRY_TOKEN'
+            })
         $tool | Add-Member -NotePropertyName 'marketplace_name' `
             -NotePropertyValue 'openai-curated'
         $tool | Add-Member -NotePropertyName 'skill_id' `
@@ -208,6 +213,8 @@ Describe 'Deployment plan construction and validation' {
         $snapshot.mcp_name | Should Be 'entry-mcp'
         $snapshot.stdio.command | Should Be 'node'
         @($snapshot.stdio.args)[0] | Should Be 'dist/index.js'
+        $snapshot.http.url | Should Be 'https://mcp.example.test/sse'
+        $snapshot.http.bearer_token_env_var | Should Be 'MCP_ENTRY_TOKEN'
         $snapshot.PSObject.Properties['marketplace_name'] | Should Be $null
         $snapshot.PSObject.Properties['skill_id'] | Should Be $null
         (Test-DeploymentPlan -Plan $plan).IsValid | Should Be $true
