@@ -215,6 +215,11 @@ function ConvertTo-ManagerVerificationTool {
             -NotePropertyValue (New-ManagerSkillLoadVerifier)
     }
 
+    if ($Item.Type -eq 'mcp') {
+        $tool | Add-Member -NotePropertyName LoadVerifier `
+            -NotePropertyValue (New-ManagerMcpLoadVerifier -Executor $Executor)
+    }
+
     return $tool
 }
 
@@ -391,6 +396,17 @@ function New-ManagerMcpAdapter {
 
         $plan = Get-McpInstallPlan -Tool $Item
         Install-ManagedMcp -Plan $plan -Executor $Executor
+    }.GetNewClosure()
+}
+
+function New-ManagerMcpLoadVerifier {
+    param([scriptblock]$Executor)
+
+    return {
+        param([object]$Tool)
+
+        $plan = Get-McpInstallPlan -Tool $Tool
+        Test-ManagedMcp -Plan $plan -Executor $Executor
     }.GetNewClosure()
 }
 

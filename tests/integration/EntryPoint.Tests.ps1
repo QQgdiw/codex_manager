@@ -641,7 +641,7 @@ Describe 'Codex tool manager entry point' {
         $log | Should Match 'mcp add entry-mcp'
     }
 
-    It 'verify is conservative when no load or smoke verifier is present' {
+    It 'verify reports failed load when approved mcp metadata is incomplete' {
         $fixture = New-EntryPointFixture `
             -Root (Join-Path $TestDrive 'verify') `
             -ToolId 'mcp.entry' `
@@ -658,7 +658,9 @@ Describe 'Codex tool manager entry point' {
         @($body.Results | Where-Object { $_.Level -eq 'static' })[0].Status |
             Should Be 'static_verified'
         @($body.Results | Where-Object { $_.Level -eq 'load' })[0].Status |
-            Should Be 'blocked'
+            Should Be 'failed'
+        @($body.Results | Where-Object { $_.Level -eq 'load' })[0].Message |
+            Should Match 'mcp_transport'
         @($body.Results | Where-Object { $_.Level -eq 'smoke' })[0].Status |
             Should Be 'blocked'
     }
@@ -699,6 +701,44 @@ Describe 'Codex tool manager entry point' {
             Should Be 'blocked'
         $log = Get-Content -LiteralPath $fake.Log -Raw
         $log | Should Match 'plugin list --json'
+    }
+
+    It 'verifies an approved mcp through the Codex MCP get output' {
+        $root = Join-Path $TestDrive 'mcp-verify'
+        $fixture = New-EntryPointMcpFixture -Root $root
+        $fake = New-FakeCodexCli -Root $root
+        $oldPath = $env:PATH
+        $oldLog = $env:CODEX_TOOL_MANAGER_FAKE_LOG
+        try {
+            $env:PATH = "$($fake.Bin);$oldPath"
+            $env:CODEX_TOOL_MANAGER_FAKE_LOG = $fake.Log
+
+            $run = Invoke-EntryPointProcess -Arguments @(
+                'verify', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist
+            )
+        }
+        finally {
+            $env:PATH = $oldPath
+            if ($null -eq $oldLog) {
+                Remove-Item Env:\CODEX_TOOL_MANAGER_FAKE_LOG -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:CODEX_TOOL_MANAGER_FAKE_LOG = $oldLog
+            }
+        }
+
+        $run.ExitCode | Should Be 1
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Command | Should Be 'verify'
+        $body.Status | Should Be 'blocked'
+        @($body.Results | Where-Object { $_.Level -eq 'static' })[0].Status |
+            Should Be 'static_verified'
+        @($body.Results | Where-Object { $_.Level -eq 'load' })[0].Status |
+            Should Be 'load_verified'
+        @($body.Results | Where-Object { $_.Level -eq 'smoke' })[0].Status |
+            Should Be 'blocked'
+        $log = Get-Content -LiteralPath $fake.Log -Raw
+        $log | Should Match 'mcp get entry-mcp --json'
     }
 
     It 'verifies an approved managed skill through installed content hash' {
