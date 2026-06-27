@@ -383,6 +383,17 @@ function New-ManagerSkillLoadVerifier {
     }.GetNewClosure()
 }
 
+function New-ManagerMcpAdapter {
+    param([scriptblock]$Executor)
+
+    return {
+        param([object]$Item)
+
+        $plan = Get-McpInstallPlan -Tool $Item
+        Install-ManagedMcp -Plan $plan -Executor $Executor
+    }.GetNewClosure()
+}
+
 function New-ManagerAdapterMap {
     param([AllowNull()][scriptblock]$Executor)
 
@@ -392,7 +403,7 @@ function New-ManagerAdapterMap {
 
     $map = @{}
     $map['plugin'] = New-ManagerPluginAdapter -Executor $Executor
-    $map['mcp'] = New-ManagerBlockedAdapter -Type 'mcp'
+    $map['mcp'] = New-ManagerMcpAdapter -Executor $Executor
     $map['skill'] = New-ManagerSkillAdapter
     return $map
 }

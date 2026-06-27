@@ -558,7 +558,7 @@ Describe 'Codex tool manager entry point' {
             Should Be $true
     }
 
-    It 'deploy without an adapter reports blocked business failure' {
+    It 'deploy with incomplete mcp metadata reports business failure' {
         $fixture = New-EntryPointFixture -Root (Join-Path $TestDrive 'deploy-blocked') `
             -ToolId 'mcp.entry' `
             -ToolType 'mcp'
@@ -570,8 +570,8 @@ Describe 'Codex tool manager entry point' {
         $run.ExitCode | Should Be 1
         $body = ConvertFrom-EntryPointJson -Run $run
         $body.Status | Should Be 'blocked'
-        @($body.Results)[0].Status | Should Be 'blocked'
-        @($body.Results)[0].Message | Should Match 'adapter'
+        @($body.Results)[0].Status | Should Be 'failed'
+        @($body.Results)[0].Message | Should Match 'mcp_transport'
     }
 
     It 'deploys an approved plugin through the Codex plugin adapter' {
@@ -606,6 +606,39 @@ Describe 'Codex tool manager entry point' {
         $log = Get-Content -LiteralPath $fake.Log -Raw
         $log | Should Match 'plugin marketplace add'
         $log | Should Match 'plugin add browser@openai-bundled'
+    }
+
+    It 'deploys an approved mcp through the managed MCP adapter' {
+        $root = Join-Path $TestDrive 'mcp-deploy'
+        $fixture = New-EntryPointMcpFixture -Root $root
+        $fake = New-FakeCodexCli -Root $root
+        $oldPath = $env:PATH
+        $oldLog = $env:CODEX_TOOL_MANAGER_FAKE_LOG
+        try {
+            $env:PATH = "$($fake.Bin);$oldPath"
+            $env:CODEX_TOOL_MANAGER_FAKE_LOG = $fake.Log
+
+            $run = Invoke-EntryPointProcess -Arguments @(
+                'deploy', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist
+            )
+        }
+        finally {
+            $env:PATH = $oldPath
+            if ($null -eq $oldLog) {
+                Remove-Item Env:\CODEX_TOOL_MANAGER_FAKE_LOG -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:CODEX_TOOL_MANAGER_FAKE_LOG = $oldLog
+            }
+        }
+
+        $run.ExitCode | Should Be 0
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Command | Should Be 'deploy'
+        $body.Status | Should Be 'succeeded'
+        @($body.Results)[0].Status | Should Be 'succeeded'
+        $log = Get-Content -LiteralPath $fake.Log -Raw
+        $log | Should Match 'mcp add entry-mcp'
     }
 
     It 'verify is conservative when no load or smoke verifier is present' {
