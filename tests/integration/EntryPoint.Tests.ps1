@@ -195,6 +195,66 @@ skill_manifest = "SKILL.md"
     }
 }
 
+function New-EntryPointMcpFixture {
+    param(
+        [string]$Root,
+        [string]$ToolId = 'mcp.entry',
+        [string]$McpName = 'entry-mcp'
+    )
+
+    $serverRoot = Join-Path $Root 'server'
+    $dist = Join-Path $serverRoot 'dist'
+    New-Item -ItemType Directory -Path $dist -Force | Out-Null
+    Write-EntryPointTextFile -Path (Join-Path $dist 'index.js') -Text @"
+console.log('entry mcp fixture');
+"@
+
+    $configPath = Join-Path $Root 'config.toml'
+    $whitelistPath = Join-Path $Root 'whitelist.toml'
+    $hash = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+    Write-EntryPointTextFile -Path $configPath -Text @"
+schema_version = 1
+name = "mcp-entrypoint"
+enabled_tools = ["$ToolId"]
+"@
+    Write-EntryPointTextFile -Path $whitelistPath -Text @"
+schema_version = "1.0"
+
+[[tools]]
+id = "$ToolId"
+name = "Entry MCP"
+type = "mcp"
+source = "local"
+version = "1.0.0"
+sha256 = "$hash"
+license = "MIT"
+approval = "approved"
+risk = "medium"
+install_target = "MCP/entry"
+credential_refs = []
+conflicts = []
+dependencies = []
+permissions = []
+external_changes = []
+rollback_capability = "managed_files"
+mcp_transport = "stdio"
+mcp_name = "$McpName"
+
+[tools.stdio]
+command = "node"
+args = ["dist/index.js"]
+working_directory = "$($serverRoot.Replace('\', '\\'))"
+"@
+
+    return [pscustomobject]@{
+        Config = $configPath
+        Whitelist = $whitelistPath
+        ServerRoot = $serverRoot
+        StartupFile = Join-Path $dist 'index.js'
+        McpName = $McpName
+    }
+}
+
 function Invoke-EntryPointProcess {
     param([string[]]$Arguments)
 
@@ -250,6 +310,14 @@ if "%~1"=="plugin" if "%~2"=="add" (
 )
 if "%~1"=="plugin" if "%~2"=="list" (
   echo {"plugin":"browser","marketplace":"openai-bundled"}
+  exit /b 0
+)
+if "%~1"=="mcp" if "%~2"=="add" (
+  echo {"ok":true,"name":"%~3"}
+  exit /b 0
+)
+if "%~1"=="mcp" if "%~2"=="get" (
+  echo {"name":"%~3","configured":true}
   exit /b 0
 )
 echo unsupported fake codex command: %* 1>&2
@@ -437,6 +505,39 @@ Describe 'Codex tool manager entry point' {
         $body.Status | Should Be 'succeeded'
         @($body.Results)[0].Status | Should Be 'dry_run'
         (Test-Path -LiteralPath $fixture.Target) | Should Be $false
+    }
+
+    It 'keeps approved mcp deploy dry-run from calling Codex CLI' {
+        $root = Join-Path $TestDrive 'mcp-dryrun'
+        $fixture = New-EntryPointMcpFixture -Root $root
+        $fake = New-FakeCodexCli -Root $root
+        $oldPath = $env:PATH
+        $oldLog = $env:CODEX_TOOL_MANAGER_FAKE_LOG
+        try {
+            $env:PATH = "$($fake.Bin);$oldPath"
+            $env:CODEX_TOOL_MANAGER_FAKE_LOG = $fake.Log
+
+            $run = Invoke-EntryPointProcess -Arguments @(
+                'deploy', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist,
+                '-DryRun'
+            )
+        }
+        finally {
+            $env:PATH = $oldPath
+            if ($null -eq $oldLog) {
+                Remove-Item Env:\CODEX_TOOL_MANAGER_FAKE_LOG -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:CODEX_TOOL_MANAGER_FAKE_LOG = $oldLog
+            }
+        }
+
+        $run.ExitCode | Should Be 0
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $body.Command | Should Be 'deploy'
+        $body.Status | Should Be 'succeeded'
+        @($body.Results)[0].Status | Should Be 'dry_run'
+        (Test-Path -LiteralPath $fake.Log -PathType Leaf) | Should Be $false
     }
 
     It 'deploys an approved skill through the managed Skill adapter' {
