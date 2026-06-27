@@ -179,6 +179,40 @@ Describe 'Deployment plan construction and validation' {
         (Test-DeploymentPlan -Plan $plan).IsValid | Should Be $true
     }
 
+    It 'preserves only mcp-specific approved fields for mcp snapshots' {
+        $tool = New-TestTool -Id 'mcp.entry'
+        $tool.type = 'mcp'
+        $tool.install_target = 'MCP/modelcontextprotocol/entry'
+        $tool | Add-Member -NotePropertyName 'mcp_transport' `
+            -NotePropertyValue 'stdio'
+        $tool | Add-Member -NotePropertyName 'mcp_name' `
+            -NotePropertyValue 'entry-mcp'
+        $tool | Add-Member -NotePropertyName 'stdio' `
+            -NotePropertyValue ([pscustomobject]@{
+                command = 'node'
+                args = @('dist/index.js')
+                working_directory = 'E:\codex\MCP\servers\src\entry'
+            })
+        $tool | Add-Member -NotePropertyName 'marketplace_name' `
+            -NotePropertyValue 'openai-curated'
+        $tool | Add-Member -NotePropertyName 'skill_id' `
+            -NotePropertyValue 'unsafe-skill'
+
+        $plan = New-DeploymentPlan `
+            -Config (New-TestConfig @('mcp.entry')) `
+            -Whitelist (New-TestWhitelist @($tool)) `
+            -CredentialMetadata @()
+
+        $snapshot = $plan.Items[0].ApprovedSnapshot
+        $snapshot.mcp_transport | Should Be 'stdio'
+        $snapshot.mcp_name | Should Be 'entry-mcp'
+        $snapshot.stdio.command | Should Be 'node'
+        @($snapshot.stdio.args)[0] | Should Be 'dist/index.js'
+        $snapshot.PSObject.Properties['marketplace_name'] | Should Be $null
+        $snapshot.PSObject.Properties['skill_id'] | Should Be $null
+        (Test-DeploymentPlan -Plan $plan).IsValid | Should Be $true
+    }
+
     It 'rejects skill snapshots whose install target does not match skill_id' {
         $tool = New-TestTool -Id 'skill.a'
         $tool.install_target = 'Skills/other-skill'

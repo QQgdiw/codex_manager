@@ -181,6 +181,14 @@ function New-DeploymentApprovedSnapshot {
             'skill_manifest'
         )
     }
+    elseif ($type -eq 'mcp') {
+        $adapterFields = @(
+            'mcp_transport',
+            'mcp_name',
+            'stdio',
+            'http'
+        )
+    }
 
     foreach ($field in $adapterFields) {
         $member = Get-DeploymentMember -InputObject $Tool -Name $field
