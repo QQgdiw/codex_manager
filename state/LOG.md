@@ -123,3 +123,10 @@
 - `Test-DeploymentPlan` 会在 skill approved snapshot 含 `skill_id` 时校验 `install_target` 必须匹配 `Skills/<skill_id>`，防止计划目标和实际受管安装目录不一致。
 - `verify` 已为 skill 附加 load verifier，通过受管安装目录、`SKILL.md` 和源内容 hash 验证；smoke verification 仍保守阻塞，不能宣称 Codex 运行时已实际加载并执行 Skill。
 - TDD 证据：Skill fixture 24 passed / 0 failed；Skill deploy RED 为 24 passed / 1 failed，修复后 integration 为 25 passed / 0 failed，unit 为 270 passed / 0 failed；Skill verify RED 为 25 passed / 1 failed，GREEN 为 26 passed / 0 failed，unit 为 270 passed / 0 failed。
+
+## 2026-06-27：MCP 真实部署与 load 验证最小闭环
+
+- `mcp` 类型已从 blocked adapter 切换到真实 `Install-ManagedMcp`；测试使用临时 MCP stdio server 文件和 fake `codex.cmd`，未修改真实用户 Codex MCP 配置。
+- `New-DeploymentApprovedSnapshot` 现在按 `mcp` 类型保留 `mcp_transport`、`mcp_name`、`stdio` 和 `http`，并继续隔离 plugin、skill、mcp 的 adapter-specific 字段。
+- `verify` 已为 mcp 附加 load verifier，通过 `codex mcp get <name> --json` 验证 MCP 在 Codex 配置中可查询；smoke verification 仍保守阻塞，不能宣称 MCP 工具方法已被安全调用。
+- TDD 证据：MCP snapshot RED 为 270 passed / 1 failed，GREEN 为 271 passed / 0 failed；MCP fixture integration 为 27 passed / 0 failed；MCP deploy RED 为 27 passed / 1 failed，GREEN 为 28 passed / 0 failed，unit 为 271 passed / 0 failed；MCP verify RED 为 28 passed / 1 failed，GREEN 为 29 passed / 0 failed，unit 为 271 passed / 0 failed。
