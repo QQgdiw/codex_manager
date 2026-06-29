@@ -141,8 +141,8 @@ Describe 'Get-McpInstallPlan' {
         $plan.Status | Should Be 'planned'
         $plan.McpName | Should Be 'safe-docs'
         $plan.AddCommand.FilePath | Should Be 'codex'
-        ($plan.AddCommand.Arguments -join '|') |
-            Should Be 'mcp|add|safe-docs|--|node|dist/index.js'
+        @($plan.AddCommand.Arguments)[-1] |
+            Should Be ([IO.Path]::GetFullPath((Join-Path $TestDrive 'dist\index.js')))
         ($plan.AddCommand.Arguments -contains 'unsafe-top-level-command') | Should Be $false
         $plan.StartupFileExists | Should Be $true
     }
@@ -394,8 +394,8 @@ Describe 'Install-ManagedMcp' {
 
         $result.Status | Should Be 'succeeded'
         $script:calls.Count | Should Be 1
-        ($script:calls[0].Arguments -join '|') |
-            Should Be 'mcp|add|local-docs|--|node|dist/index.js'
+        @($script:calls[0].Arguments)[-1] |
+            Should Be ([IO.Path]::GetFullPath((Join-Path $TestDrive 'dist\index.js')))
         $script:journalEntries.Count | Should Be 1
         $script:journalEntries[0].Type | Should Be 'ExternalChange'
         $script:journalEntries[0].RollbackCommand | Should Be ''

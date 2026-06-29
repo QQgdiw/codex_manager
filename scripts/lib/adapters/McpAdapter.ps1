@@ -371,6 +371,28 @@ function Test-McpAdapterPathWithinRoot {
     )
 }
 
+function Get-McpAdapterLocalCandidateFullPath {
+    param(
+        [AllowNull()][string]$Value,
+        [AllowNull()][string]$WorkingDirectory
+    )
+
+    if (-not (Test-McpAdapterLocalPathCandidate -Value $Value) -or
+        [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+        return $null
+    }
+
+    try {
+        if ([IO.Path]::IsPathRooted($Value)) {
+            return [IO.Path]::GetFullPath($Value)
+        }
+        return [IO.Path]::GetFullPath((Join-Path $WorkingDirectory $Value))
+    }
+    catch {
+        return $null
+    }
+}
+
 function Resolve-McpStartupFilePath {
     param(
         [AllowNull()][object]$Stdio,
@@ -566,11 +588,50 @@ function Get-McpInstallPlan {
             }
         }
 
+        $resolvedCommand = $command
+        $resolvedArgs = @($args)
+        if ($null -ne $startupPath -and $startupExists) {
+            $startupMapped = $false
+            $commandPath = Get-McpAdapterLocalCandidateFullPath `
+                -Value $command `
+                -WorkingDirectory $workingDirectory
+            if ($null -ne $commandPath -and
+                [string]::Equals(
+                    $commandPath,
+                    $startupPath,
+                    [StringComparison]::OrdinalIgnoreCase
+                )) {
+                $resolvedCommand = $startupPath
+                $startupMapped = $true
+            }
+
+            for ($index = 0; $index -lt $resolvedArgs.Count; $index++) {
+                $argumentPath = Get-McpAdapterLocalCandidateFullPath `
+                    -Value $resolvedArgs[$index] `
+                    -WorkingDirectory $workingDirectory
+                if ($null -ne $argumentPath -and
+                    [string]::Equals(
+                        $argumentPath,
+                        $startupPath,
+                        [StringComparison]::OrdinalIgnoreCase
+                    )) {
+                    $resolvedArgs[$index] = $startupPath
+                    $startupMapped = $true
+                }
+            }
+
+            if (-not $startupMapped) {
+                [void]$errors.Add(
+                    'stdio.startup_file must identify the command or one of its arguments.'
+                )
+            }
+        }
+
         if ($errors.Count -eq 0) {
             $addArguments = @('mcp', 'add', $mcpName) +
                 $envArgs +
-                @('--', $command) +
-                $args
+                @('--', $resolvedCommand) +
+                $resolvedArgs
         }
     }
     elseif ($transport -eq 'http') {
