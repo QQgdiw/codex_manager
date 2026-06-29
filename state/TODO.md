@@ -40,6 +40,7 @@
 - [x] 接入 Skill 真实部署适配器和 load verifier；当前只证明受管安装与内容 hash 正确。
 - [ ] 为 Skill 补充真正的运行时 smoke verifier；当前不伪造 Codex 运行时执行成功。
 - [x] 接入 MCP 真实部署适配器和 load verifier；当前只证明 Codex MCP 配置可查询到该 MCP。
+- [ ] 完成 sequential-thinking MCP 的用户级真实环境部署与 load verification；plan、dry-run 和隔离真实 CLI 验证已通过，当前提升权限执行通道未启动命令。
 - [ ] 为 MCP 补充真正的功能性 smoke verifier；当前不伪造 MCP 工具调用成功。
 - [ ] 为插件补充真正的功能性 smoke verifier；当前只证明 load 可见，不伪造插件功能成功。
 - [ ] 后续如做审批可视化，应以 `Resources/approval_review.toml` 为数据源，而不是解析 Markdown。

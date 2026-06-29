@@ -19,6 +19,8 @@
 - 当前 `Resources/config_*.toml` 中的 `enabled_tools` 均为空，直接运行这些场景配置不会部署任何工具。
 - load verification 只证明工具已安装、内容正确或能被 Codex CLI 查询；目前尚未证明实际功能调用成功。
 
+截至 2026-06-29，sequential-thinking MCP 的 plan、dry-run 和临时 `CODEX_HOME` 真实 CLI add/get/remove 已通过；用户级真实部署仍等待提升权限执行通道恢复，本轮没有修改用户级 Codex 配置。
+
 ## 推荐下一步
 
 建议先进行一次**单工具真实环境试运行**，首选：

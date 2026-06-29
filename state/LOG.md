@@ -130,3 +130,12 @@
 - `New-DeploymentApprovedSnapshot` 现在按 `mcp` 类型保留 `mcp_transport`、`mcp_name`、`stdio` 和 `http`，并继续隔离 plugin、skill、mcp 的 adapter-specific 字段。
 - `verify` 已为 mcp 附加 load verifier，通过 `codex mcp get <name> --json` 验证 MCP 在 Codex 配置中可查询；smoke verification 仍保守阻塞，不能宣称 MCP 工具方法已被安全调用。
 - TDD 证据：MCP snapshot RED 为 270 passed / 1 failed，GREEN 为 271 passed / 0 failed；MCP fixture integration 为 27 passed / 0 failed；MCP deploy RED 为 27 passed / 1 failed，GREEN 为 28 passed / 0 failed，unit 为 271 passed / 0 failed；MCP verify RED 为 28 passed / 1 failed，GREEN 为 29 passed / 0 failed，unit 为 271 passed / 0 failed。
+
+## 2026-06-29：sequential-thinking MCP 真实环境试运行预检
+
+- 单工具配置的 plan 和 dry-run 均成功，目标为 `mcp.modelcontextprotocol.sequential-thinking`，dry-run 未修改用户配置。
+- 预检发现 `codex mcp add` 不支持工作目录参数，原适配器虽然验证了 `working_directory\startup_file`，却仍登记相对参数 `dist/index.js`，实际运行时可能在错误目录解析脚本。
+- 已将与 approved `startup_file` 对应的 stdio command/argument 转换为已验证的绝对路径；RED 为 269 passed / 2 failed，GREEN 为 271 passed / 0 failed，最终全量测试为 300 passed / 0 failed。
+- 使用真实 Codex CLI `0.142.4` 和临时 `CODEX_HOME` 完成 `mcp add`、`mcp get --json`、`mcp remove`；查询结果确认参数为 `E:\codex\MCP\servers\src\sequentialthinking\dist\index.js`，临时配置已移除该 MCP。
+- 用户级真实部署尚未执行：提升权限命令在 30 秒内未创建 START 标记或日志，说明命令没有进入真实用户执行通道。本轮没有修改用户级 Codex 配置。
+- 临时 `.tmp` 目录被残留 runner 占用，已加入 `.gitignore` 防止误提交；待进程释放后再清理。
