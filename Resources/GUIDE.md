@@ -17,13 +17,13 @@
 - **代码路径已经实现并测试**，不代表工具已经部署到你的用户级 Codex 环境。
 - 集成测试使用临时目录和 fake `codex.cmd`，不会修改真实 Codex 配置。
 - 当前 `Resources/config_*.toml` 中的 `enabled_tools` 均为空，直接运行这些场景配置不会部署任何工具。
-- load verification 只证明工具已安装、内容正确或能被 Codex CLI 查询；目前尚未证明实际功能调用成功。
+- load verification 只证明工具已安装、内容正确或能被 Codex CLI 查询；sequential-thinking 已额外完成人工协议 smoke，但其他工具仍没有功能调用证据。
 
-截至 2026-06-29，sequential-thinking MCP 的 plan、dry-run 和临时 `CODEX_HOME` 真实 CLI add/get/remove 已通过；用户级真实部署仍等待提升权限执行通道恢复，本轮没有修改用户级 Codex 配置。
+截至 2026-06-29，sequential-thinking MCP 已写入用户级 Codex 配置，静态验证和 load verification 通过；独立 MCP 客户端也已完成一次最小协议调用。管理器尚未内置 MCP smoke verifier，因此自动验证整体状态仍为 `blocked`，阻塞码为 `smoke_verifier_missing`。
 
 ## 推荐下一步
 
-建议先进行一次**单工具真实环境试运行**，首选：
+建议下一步把本次手工验证固化为**自动化 MCP smoke verifier**，首个目标为：
 
 ```text
 mcp.modelcontextprotocol.sequential-thinking
@@ -34,11 +34,11 @@ mcp.modelcontextprotocol.sequential-thinking
 - 已在白名单中批准。
 - 不需要文件系统访问权限。
 - 相比 filesystem MCP，真实试运行的副作用和权限风险更低。
-- 可以先验证真实 `codex mcp add`、`codex mcp get` 和失败处理链路。
+- 已有真实协议调用证据，可以据此定义稳定的自动判定和超时清理逻辑。
 
-试运行稳定后，再按以下顺序推进：
+后续按以下顺序推进：
 
-1. 为 sequential-thinking MCP 设计最小功能性 smoke verifier。
+1. 为 sequential-thinking MCP 实现并测试最小功能性 smoke verifier。
 2. 明确 filesystem MCP 的允许根目录和读写范围。
 3. 对 filesystem MCP 进行真实环境试运行和 smoke 验证。
 4. 分别为 plugin 和 skill 补充功能性 smoke verifier。
@@ -49,22 +49,20 @@ mcp.modelcontextprotocol.sequential-thinking
 如果接受推荐顺序，直接告诉我：
 
 ```text
-进行真实环境试运行，先部署并验证 sequential-thinking MCP。
+接入 sequential-thinking MCP 的自动化 smoke verifier。
 ```
 
 收到指示后，我会：
 
-1. 创建只启用该 MCP 的临时配置，不直接改动六类场景配置。
-2. 先运行 plan 和 dry-run，确认命令、目标和回滚信息。
-3. 在真正修改用户级 Codex 配置前申请所需权限。
-4. 执行真实部署和 load verification。
-5. 记录结果；失败时执行受管回滚或记录无法自动清理的残留。
-6. 根据真实结果设计最小 smoke verifier。
+1. 把本次独立 MCP 客户端验证提炼为适配器内的最小 smoke verifier。
+2. 增加超时、子进程清理、结果脱敏和失败判定测试。
+3. 先在隔离测试环境验证，再对已部署的 sequential-thinking 执行真实复核。
+4. 更新验证记录，并保持 load 与 smoke 状态分离。
 
 如果暂时不希望修改真实用户环境，可以告诉我：
 
 ```text
-暂不进行真实部署，先设计 sequential-thinking MCP 的 smoke verifier。
+暂不接入自动 smoke verifier，先明确 filesystem MCP 的允许根目录。
 ```
 
 如果希望先处理其他类型，可以明确指定：
@@ -101,5 +99,5 @@ mcp.modelcontextprotocol.sequential-thinking
 若要继续推进，建议直接回复：
 
 ```text
-进行真实环境试运行，先部署并验证 sequential-thinking MCP。
+接入 sequential-thinking MCP 的自动化 smoke verifier。
 ```

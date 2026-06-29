@@ -139,3 +139,12 @@
 - 使用真实 Codex CLI `0.142.4` 和临时 `CODEX_HOME` 完成 `mcp add`、`mcp get --json`、`mcp remove`；查询结果确认参数为 `E:\codex\MCP\servers\src\sequentialthinking\dist\index.js`，临时配置已移除该 MCP。
 - 用户级真实部署尚未执行：提升权限命令在 30 秒内未创建 START 标记或日志，说明命令没有进入真实用户执行通道。本轮没有修改用户级 Codex 配置。
 - 临时 `.tmp` 目录被残留 runner 占用，已加入 `.gitignore` 防止误提交；待进程释放后再清理。
+
+## 2026-06-29：sequential-thinking MCP 用户级真实部署与验证
+
+- 权限恢复后重新执行单工具 plan 和 dry-run，二者退出码均为 0；计划仅包含 `mcp.modelcontextprotocol.sequential-thinking`。
+- 部署前真实用户配置中不存在 `modelcontextprotocol-sequential-thinking`；部署命令退出码为 0，未产生标准错误。
+- `codex mcp get modelcontextprotocol-sequential-thinking --json` 确认配置已启用，transport 为 stdio，command 为 `node`，参数为绝对路径 `E:\codex\MCP\servers\src\sequentialthinking\dist\index.js`；原有 MCP 配置未被删除。
+- 管理器验证结果为 static=`static_verified`、load=`load_verified`、smoke=`blocked`；整体退出码为 1 的原因是尚未接入自动 smoke verifier，错误码为 `smoke_verifier_missing`，不是部署或 load 失败。
+- 使用本地 `@modelcontextprotocol/sdk` 1.29.0 独立连接已部署服务器，完成初始化、`tools/list` 和一次低副作用 `sequentialthinking` 调用；进程退出码为 0，公布工具为 `sequentialthinking`，返回内容类型为 `text`。
+- 当前最高证据为“人工协议 smoke 通过”；管理器自动 smoke verifier 仍待实现。由于 load 与人工 smoke 均成功，本次未执行回滚，也没有已知残留子进程。

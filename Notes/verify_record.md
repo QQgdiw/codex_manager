@@ -238,3 +238,21 @@ This file is maintained by `Write-VerificationRecord`.
 - Deployment dry run: `deploy -DryRun` succeeded for all 4 approved items after adding explicit `rollback_capability = "managed_files"`.
 - Layered verification: static verification passed for all 4 items; load verification was blocked for all 4 because no load verifier was provided; smoke verification was blocked because load verification did not pass.
 - Real deployment: not performed in this task. The current manager entry point still uses planning-only deployment adapters, so this record must not be treated as proof of installed tools.
+
+## 验证记录：Sequential Thinking MCP 用户级真实试运行
+
+- 工具：Model Context Protocol Sequential Thinking Server
+- 白名单 ID：`mcp.modelcontextprotocol.sequential-thinking`
+- 工具类型：MCP；服务器版本：`0.6.2`
+- 来源：`https://github.com/modelcontextprotocol/servers.git`
+- 部署时间：`2026-06-29 22:52:47 +08:00`
+- 部署目标：用户级 Codex MCP 配置，名称为 `modelcontextprotocol-sequential-thinking`
+- 启动命令：`node E:\codex\MCP\servers\src\sequentialthinking\dist\index.js`
+- 静态验证：`static_verified`
+- 加载验证：`load_verified`；真实 `codex mcp get --json` 可查询且配置已启用
+- 自动 smoke 验证：`blocked`；阻塞原因为 `smoke_verifier_missing`
+- 人工协议 smoke：成功；完成 MCP 初始化、`tools/list` 和一次最小 `sequentialthinking` 调用，返回内容类型为 `text`
+- 综合结论：真实部署和加载成功，人工协议 smoke 成功；管理器自动 smoke verifier 尚未接入
+- 回滚：未执行，因为部署、load 和人工 smoke 均成功
+- 残留：未发现目标服务器子进程；一次性客户端和输出位于已忽略的 `.tmp` 目录
+- 凭据：本工具无需凭据，本记录未读取或保存认证文件正文
