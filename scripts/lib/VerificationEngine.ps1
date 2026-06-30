@@ -349,6 +349,26 @@ function Invoke-StaticVerification {
             -ErrorCode $errorCode
     }
 
+    $verifier = Get-VerificationMemberValue -Object $Tool `
+        -Names @('StaticVerifier', 'static_verifier')
+    if ($null -ne $verifier -and $verifier -is [scriptblock]) {
+        try {
+            $adapterResult = & $verifier $Tool
+        }
+        catch {
+            return New-VerificationResult -Tool $Tool -Level 'static' `
+                -Status 'failed' -Message $_.Exception.Message `
+                -StartedAt $startedAt -Checks $checks `
+                -ErrorCode 'static_verifier_exception'
+        }
+        $result = ConvertTo-VerificationResultFromAdapter `
+            -Tool $Tool -Level 'static' -StartedAt $startedAt `
+            -AdapterResult $adapterResult `
+            -DefaultSuccessStatus 'static_verified'
+        $result.Checks = @($checks) + @($result.Checks)
+        return $result
+    }
+
     return New-VerificationResult `
         -Tool $Tool `
         -Level 'static' `

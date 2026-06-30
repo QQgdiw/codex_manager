@@ -81,6 +81,30 @@ Describe 'Layered tool verification' {
         ($result.FinishedAt -ge $result.StartedAt) | Should Be $true
     }
 
+    It 'merges an injected static verifier result' {
+        $tool = New-TestVerificationTool
+        $tool | Add-Member -NotePropertyName StaticVerifier -NotePropertyValue {
+            @{ Status = 'static_verified'; Message = 'profile ok'; Checks = @('smoke_profile_ok') }
+        }
+
+        $result = Invoke-StaticVerification -Tool $tool
+
+        $result.Status | Should Be 'static_verified'
+        (@($result.Checks) -contains 'smoke_profile_ok') | Should Be $true
+    }
+
+    It 'returns static failure from an injected verifier' {
+        $tool = New-TestVerificationTool
+        $tool | Add-Member -NotePropertyName StaticVerifier -NotePropertyValue {
+            @{ Status = 'failed'; Message = 'hash mismatch'; ErrorCode = 'mcp_smoke_script_hash_mismatch' }
+        }
+
+        $result = Invoke-StaticVerification -Tool $tool
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'mcp_smoke_script_hash_mismatch'
+    }
+
     It 'returns failed instead of throwing for missing required fields' {
         $tool = New-TestVerificationTool
         $tool.PSObject.Properties.Remove('version')
