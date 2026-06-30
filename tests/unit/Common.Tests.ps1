@@ -152,6 +152,12 @@ elif mode == "invalid-utf8":
     sys.stdout.buffer.flush()
     sys.stderr.buffer.flush()
     sys.exit(7)
+elif mode == "environment":
+    sys.stdout.write("%s|%s|%s" % (
+        os.environ.get("SystemRoot", ""),
+        os.environ.get("CODEX_SMOKE_SECRET", ""),
+        os.environ.get("SMOKE_ACTION", ""),
+    ))
 '@ | Set-Content -LiteralPath $script:pythonChildScript -Encoding ASCII
     }
 
@@ -323,9 +329,8 @@ elif mode == "invalid-utf8":
     It 'clears inherited environment and passes only explicit values' {
         $env:CODEX_SMOKE_SECRET = 'must-not-leak'
         try {
-            $result = Invoke-ManagedProcess -FilePath $powerShellPath -Arguments @(
-                '-NoProfile', '-Command',
-                '[Console]::Write("$env:CODEX_SMOKE_SECRET|$env:SMOKE_ACTION")'
+            $result = Invoke-ManagedProcess -FilePath $pythonPath -Arguments @(
+                $pythonChildScript, 'environment'
             ) -TimeoutSeconds 10 -ClearEnvironment `
                 -Environment @{ SMOKE_ACTION = 'prepare' }
         }
@@ -334,7 +339,7 @@ elif mode == "invalid-utf8":
         }
 
         $result.Succeeded | Should Be $true
-        $result.StdOut | Should Be '|prepare'
+        $result.StdOut | Should Be '||prepare'
     }
 
     It 'uses an explicit working directory' {

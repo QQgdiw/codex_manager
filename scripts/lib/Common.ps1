@@ -474,12 +474,7 @@ function Invoke-ManagedProcess {
         $startInfo.WorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
     }
     if ($ClearEnvironment) {
-        # Windows PowerShell cannot initialize without SystemRoot.
-        $systemRoot = $startInfo.EnvironmentVariables['SystemRoot']
         $startInfo.EnvironmentVariables.Clear()
-        if (-not [string]::IsNullOrWhiteSpace($systemRoot)) {
-            $startInfo.EnvironmentVariables['SystemRoot'] = $systemRoot
-        }
     }
     if ($null -ne $Environment) {
         foreach ($key in $Environment.Keys) {
