@@ -320,6 +320,34 @@ elif mode == "invalid-utf8":
         $result.StdErr | Should Match ([regex]::Escape($replacement))
     }
 
+    It 'clears inherited environment and passes only explicit values' {
+        $env:CODEX_SMOKE_SECRET = 'must-not-leak'
+        try {
+            $result = Invoke-ManagedProcess -FilePath $powerShellPath -Arguments @(
+                '-NoProfile', '-Command',
+                '[Console]::Write("$env:CODEX_SMOKE_SECRET|$env:SMOKE_ACTION")'
+            ) -TimeoutSeconds 10 -ClearEnvironment `
+                -Environment @{ SMOKE_ACTION = 'prepare' }
+        }
+        finally {
+            Remove-Item Env:\CODEX_SMOKE_SECRET -ErrorAction SilentlyContinue
+        }
+
+        $result.Succeeded | Should Be $true
+        $result.StdOut | Should Be '|prepare'
+    }
+
+    It 'uses an explicit working directory' {
+        $work = Join-Path $TestDrive 'managed-working-directory'
+        New-Item -ItemType Directory -Path $work | Out-Null
+        $result = Invoke-ManagedProcess -FilePath $powerShellPath -Arguments @(
+            '-NoProfile', '-Command', '[Console]::Write((Get-Location).Path)'
+        ) -TimeoutSeconds 10 -WorkingDirectory $work
+
+        $result.Succeeded | Should Be $true
+        [IO.Path]::GetFullPath($result.StdOut) | Should Be ([IO.Path]::GetFullPath($work))
+    }
+
     It 'throws when the executable cannot be started' {
         $message = Get-ThrownMessage {
             Invoke-ManagedProcess -FilePath (Join-Path $TestDrive 'missing.exe') -Arguments @() -TimeoutSeconds 1

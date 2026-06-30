@@ -453,7 +453,11 @@ function Invoke-ManagedProcess {
 
         [Parameter(Mandatory = $true)]
         [ValidateRange(1, 2147483)]
-        [int]$TimeoutSeconds
+        [int]$TimeoutSeconds,
+
+        [AllowNull()][string]$WorkingDirectory,
+        [AllowNull()][System.Collections.IDictionary]$Environment,
+        [switch]$ClearEnvironment
     )
 
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -465,6 +469,27 @@ function Invoke-ManagedProcess {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+
+    if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+        $startInfo.WorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
+    }
+    if ($ClearEnvironment) {
+        # Windows PowerShell cannot initialize without SystemRoot.
+        $systemRoot = $startInfo.EnvironmentVariables['SystemRoot']
+        $startInfo.EnvironmentVariables.Clear()
+        if (-not [string]::IsNullOrWhiteSpace($systemRoot)) {
+            $startInfo.EnvironmentVariables['SystemRoot'] = $systemRoot
+        }
+    }
+    if ($null -ne $Environment) {
+        foreach ($key in $Environment.Keys) {
+            $name = [string]$key
+            if ($name -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+                throw "Managed process environment name is invalid: $name"
+            }
+            $startInfo.EnvironmentVariables[$name] = [string]$Environment[$key]
+        }
+    }
 
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
