@@ -198,6 +198,14 @@ Describe 'Deployment plan construction and validation' {
                 url = 'https://mcp.example.test/sse'
                 bearer_token_env_var = 'MCP_ENTRY_TOKEN'
             })
+        $tool | Add-Member -NotePropertyName 'smoke' -NotePropertyValue ([pscustomobject]@{
+            tool_name = 'entry-tool'
+            timeout_seconds = 10
+            expected_content_types = @('text')
+            script_path = 'scripts/smoke/mcp/entry.mjs'
+            script_sha256 = ('a' * 64)
+            arguments = [pscustomobject]@{ value = 'approved' }
+        })
         $tool | Add-Member -NotePropertyName 'marketplace_name' `
             -NotePropertyValue 'openai-curated'
         $tool | Add-Member -NotePropertyName 'skill_id' `
@@ -215,6 +223,10 @@ Describe 'Deployment plan construction and validation' {
         @($snapshot.stdio.args)[0] | Should Be 'dist/index.js'
         $snapshot.http.url | Should Be 'https://mcp.example.test/sse'
         $snapshot.http.bearer_token_env_var | Should Be 'MCP_ENTRY_TOKEN'
+        $snapshot.smoke.tool_name | Should Be 'entry-tool'
+        $snapshot.smoke.arguments.value | Should Be 'approved'
+        $tool.smoke.arguments.value = 'tampered-after-plan'
+        $snapshot.smoke.arguments.value | Should Be 'approved'
         $snapshot.PSObject.Properties['marketplace_name'] | Should Be $null
         $snapshot.PSObject.Properties['skill_id'] | Should Be $null
         (Test-DeploymentPlan -Plan $plan).IsValid | Should Be $true

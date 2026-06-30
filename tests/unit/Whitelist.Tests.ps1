@@ -155,6 +155,57 @@ Describe 'Test-WhitelistDocument' {
         $messages | Should Match "conflicts\[3\].*non-empty string"
     }
 
+    It 'accepts a bounded MCP smoke profile' {
+        $tool = New-ValidWhitelistTool
+        $tool.type = 'mcp'
+        $tool.smoke = @{
+            tool_name = 'sequentialthinking'
+            timeout_seconds = 10
+            expected_content_types = @('text')
+            script_path = 'scripts/smoke/mcp/sequential-thinking.mjs'
+            script_sha256 = ('a' * 64)
+            arguments = @{
+                thought = 'smoke'
+                nextThoughtNeeded = $false
+                thoughtNumber = 1
+                totalThoughts = 1
+            }
+        }
+        $document = @{ schema_version = '1.0'; tools = @($tool) }
+
+        (Test-WhitelistDocument -Document $document).IsValid | Should Be $true
+    }
+
+    It 'rejects unsafe or malformed MCP smoke profiles' {
+        $cases = @(
+            @{ Field = 'unknown'; Value = 'value'; Match = 'unknown' },
+            @{ Field = 'timeout_seconds'; Value = 0; Match = '1 and 30' },
+            @{ Field = 'timeout_seconds'; Value = 31; Match = '1 and 30' },
+            @{ Field = 'expected_content_types'; Value = @(); Match = 'non-empty array' },
+            @{ Field = 'script_path'; Value = '..\unsafe.mjs'; Match = 'scripts/smoke/mcp' },
+            @{ Field = 'script_path'; Value = 'scripts/smoke/mcp/test.ps1'; Match = '.mjs' },
+            @{ Field = 'script_sha256'; Value = 'BAD'; Match = '64 lowercase' }
+        )
+        foreach ($case in $cases) {
+            $tool = New-ValidWhitelistTool
+            $tool.type = 'mcp'
+            $tool.smoke = @{
+                tool_name = 'test-tool'
+                timeout_seconds = 10
+                expected_content_types = @('text')
+                script_path = 'scripts/smoke/mcp/test.mjs'
+                script_sha256 = ('a' * 64)
+                arguments = @{}
+            }
+            $tool.smoke[$case.Field] = $case.Value
+            $result = Test-WhitelistDocument -Document @{
+                schema_version = '1.0'; tools = @($tool)
+            }
+            $result.IsValid | Should Be $false
+            ($result.Errors -join '; ') | Should Match $case.Match
+        }
+    }
+
     It 'throws only when the document structure is fundamentally unreadable' {
         $nullMessage = try {
             Test-WhitelistDocument -Document $null

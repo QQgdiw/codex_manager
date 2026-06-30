@@ -186,7 +186,8 @@ function New-DeploymentApprovedSnapshot {
             'mcp_transport',
             'mcp_name',
             'stdio',
-            'http'
+            'http',
+            'smoke'
         )
     }
 

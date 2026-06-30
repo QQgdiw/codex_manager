@@ -173,6 +173,72 @@ function Read-ProjectToml {
     return $document
 }
 
+function Test-McpSmokeProfile {
+    param(
+        [object]$Profile,
+        [string]$Label,
+        [System.Collections.Generic.List[string]]$Errors
+    )
+
+    if (-not (Test-ProjectObject -Value $Profile)) {
+        $Errors.Add("$Label must be an object.")
+        return
+    }
+    $allowed = @(
+        'tool_name', 'timeout_seconds', 'expected_content_types',
+        'script_path', 'script_sha256', 'arguments'
+    )
+    $propertyNames = if ($Profile -is [System.Collections.IDictionary]) {
+        @($Profile.Keys | ForEach-Object { [string]$_ })
+    }
+    else {
+        @($Profile.PSObject.Properties.Name)
+    }
+    foreach ($property in $propertyNames) {
+        if ($allowed -notcontains $property) {
+            $Errors.Add("$Label contains unknown field '$property'.")
+        }
+    }
+    foreach ($field in @('tool_name', 'script_path', 'script_sha256')) {
+        $member = Get-ProjectMember -InputObject $Profile -Name $field
+        if (-not $member.Exists -or $member.Value -isnot [string] -or
+            [string]::IsNullOrWhiteSpace([string]$member.Value)) {
+            $Errors.Add("$Label field '$field' must be a non-empty string.")
+        }
+    }
+    $timeout = Get-ProjectMember -InputObject $Profile -Name 'timeout_seconds'
+    if (-not $timeout.Exists -or
+        ($timeout.Value -isnot [int] -and $timeout.Value -isnot [long]) -or
+        [long]$timeout.Value -lt 1 -or [long]$timeout.Value -gt 30) {
+        $Errors.Add("$Label field 'timeout_seconds' must be an integer between 1 and 30.")
+    }
+    $types = Get-ProjectMember -InputObject $Profile -Name 'expected_content_types'
+    if (-not $types.Exists -or $types.Value -isnot [System.Array] -or
+        @($types.Value).Count -eq 0) {
+        $Errors.Add("$Label field 'expected_content_types' must be a non-empty array.")
+    }
+    else {
+        foreach ($value in @($types.Value)) {
+            if ($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value)) {
+                $Errors.Add("$Label expected content types must be non-empty strings.")
+            }
+        }
+    }
+    $scriptPath = [string](Get-ProjectMember -InputObject $Profile -Name 'script_path').Value
+    if (-not $scriptPath.StartsWith('scripts/smoke/mcp/', [StringComparison]::Ordinal) -or
+        -not $scriptPath.EndsWith('.mjs', [StringComparison]::Ordinal)) {
+        $Errors.Add("$Label field 'script_path' must be a .mjs path below scripts/smoke/mcp/.")
+    }
+    $scriptHash = [string](Get-ProjectMember -InputObject $Profile -Name 'script_sha256').Value
+    if ($scriptHash -cnotmatch '^[0-9a-f]{64}$') {
+        $Errors.Add("$Label field 'script_sha256' must be 64 lowercase hexadecimal characters.")
+    }
+    $arguments = Get-ProjectMember -InputObject $Profile -Name 'arguments'
+    if (-not $arguments.Exists -or -not (Test-ProjectObject -Value $arguments.Value)) {
+        $Errors.Add("$Label field 'arguments' must be an object.")
+    }
+}
+
 function Test-WhitelistDocument {
     [CmdletBinding()]
     param(
@@ -298,6 +364,17 @@ function Test-WhitelistDocument {
             -not [string]::IsNullOrWhiteSpace($hashMember.Value) -and
             $hashMember.Value -cnotmatch '^[0-9a-f]{64}$') {
             $errors.Add("$label field 'sha256' must be 64 lowercase hexadecimal characters.")
+        }
+
+        $smokeMember = Get-ProjectMember -InputObject $tool -Name 'smoke'
+        if ($smokeMember.Exists) {
+            if ($typeMember.Value -cne 'mcp') {
+                $errors.Add("$label field 'smoke' is supported only for mcp tools.")
+            }
+            else {
+                Test-McpSmokeProfile -Profile $smokeMember.Value `
+                    -Label "$label.smoke" -Errors $errors
+            }
         }
     }
 
