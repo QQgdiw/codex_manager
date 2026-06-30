@@ -327,19 +327,39 @@ elif mode == "environment":
     }
 
     It 'clears inherited environment and passes only explicit values' {
+        $secretPath = 'Env:\CODEX_SMOKE_SECRET'
+        $originalSecretExists = Test-Path -LiteralPath $secretPath
+        $originalSecretValue = if ($originalSecretExists) {
+            $env:CODEX_SMOKE_SECRET
+        }
+
         $env:CODEX_SMOKE_SECRET = 'must-not-leak'
         try {
             $result = Invoke-ManagedProcess -FilePath $pythonPath -Arguments @(
                 $pythonChildScript, 'environment'
             ) -TimeoutSeconds 10 -ClearEnvironment `
                 -Environment @{ SMOKE_ACTION = 'prepare' }
+
+            $result.Succeeded | Should Be $true
+            $result.StdOut | Should Be '||prepare'
         }
         finally {
-            Remove-Item Env:\CODEX_SMOKE_SECRET -ErrorAction SilentlyContinue
+            if ($originalSecretExists) {
+                Set-Item -LiteralPath $secretPath -Value $originalSecretValue
+            }
+            else {
+                Remove-Item -LiteralPath $secretPath -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'rejects an invalid environment variable name' {
+        $message = Get-ThrownMessage {
+            Invoke-ManagedProcess -FilePath $pythonPath -Arguments @() `
+                -TimeoutSeconds 10 -Environment @{ 'INVALID-NAME' = 'value' }
         }
 
-        $result.Succeeded | Should Be $true
-        $result.StdOut | Should Be '||prepare'
+        $message | Should Be 'Managed process environment name is invalid: INVALID-NAME'
     }
 
     It 'uses an explicit working directory' {
