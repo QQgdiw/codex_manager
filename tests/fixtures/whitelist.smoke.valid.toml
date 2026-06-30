@@ -1,0 +1,25 @@
+schema_version = "1.0"
+
+[[tools]]
+id = "mcp.example"
+name = "Example MCP"
+type = "mcp"
+source = "https://github.com/example/example-mcp"
+version = "v1.0.0"
+sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+license = "MIT"
+approval = "proposed"
+risk = "low"
+install_target = "MCP/example"
+credential_refs = []
+conflicts = []
+
+[tools.smoke]
+tool_name = "example-tool"
+timeout_seconds = 10
+expected_content_types = ["text"]
+script_path = "scripts/smoke/mcp/example.mjs"
+script_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+[tools.smoke.arguments]
+value = "approved"

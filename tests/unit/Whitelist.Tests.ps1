@@ -19,6 +19,23 @@ function New-ValidWhitelistTool {
     }
 }
 
+function New-ValidMcpSmokeProfile {
+    param([switch]$AsCustomObject)
+
+    $profile = [ordered]@{
+        tool_name = 'test-tool'
+        timeout_seconds = 10
+        expected_content_types = @('text')
+        script_path = 'scripts/smoke/mcp/test.mjs'
+        script_sha256 = ('a' * 64)
+        arguments = [ordered]@{ value = 'approved' }
+    }
+    if ($AsCustomObject) {
+        return [pscustomobject]$profile
+    }
+    return $profile
+}
+
 Describe 'Test-WhitelistDocument' {
     BeforeAll {
         . $tomlLibrary
@@ -158,22 +175,149 @@ Describe 'Test-WhitelistDocument' {
     It 'accepts a bounded MCP smoke profile' {
         $tool = New-ValidWhitelistTool
         $tool.type = 'mcp'
-        $tool.smoke = @{
-            tool_name = 'sequentialthinking'
-            timeout_seconds = 10
-            expected_content_types = @('text')
-            script_path = 'scripts/smoke/mcp/sequential-thinking.mjs'
-            script_sha256 = ('a' * 64)
-            arguments = @{
-                thought = 'smoke'
-                nextThoughtNeeded = $false
-                thoughtNumber = 1
-                totalThoughts = 1
-            }
-        }
+        $tool.smoke = New-ValidMcpSmokeProfile
         $document = @{ schema_version = '1.0'; tools = @($tool) }
 
         (Test-WhitelistDocument -Document $document).IsValid | Should Be $true
+    }
+
+    It 'accepts a smoke profile parsed from TOML as a PSCustomObject' {
+        $document = Read-ProjectToml -Path (
+            Join-Path $fixtures 'whitelist.smoke.valid.toml'
+        )
+
+        ($document.tools[0].smoke -is [System.Management.Automation.PSCustomObject]) |
+            Should Be $true
+        (Test-WhitelistDocument -Document $document).IsValid | Should Be $true
+    }
+
+    It 'rejects a malformed PSCustomObject smoke profile parsed from TOML' {
+        $document = Read-ProjectToml -Path (
+            Join-Path $fixtures 'whitelist.smoke.valid.toml'
+        )
+        $document.tools[0].smoke.timeout_seconds = 0
+
+        $result = Test-WhitelistDocument -Document $document
+
+        $result.IsValid | Should Be $false
+        ($result.Errors -join '; ') | Should Match '1 and 30'
+    }
+
+    It 'treats uppercase MCP type the same as lowercase mcp' {
+        $tool = New-ValidWhitelistTool
+        $tool.type = 'MCP'
+        $tool.smoke = New-ValidMcpSmokeProfile -AsCustomObject
+
+        $result = Test-WhitelistDocument -Document @{
+            schema_version = '1.0'; tools = @($tool)
+        }
+
+        $result.IsValid | Should Be $true
+    }
+
+    It 'rejects a non-object smoke profile' {
+        foreach ($value in @('invalid', 42)) {
+            $tool = New-ValidWhitelistTool
+            $tool.type = 'mcp'
+            $tool.smoke = $value
+
+            $result = Test-WhitelistDocument -Document @{
+                schema_version = '1.0'; tools = @($tool)
+            }
+
+            $result.IsValid | Should Be $false
+            ($result.Errors -join '; ') | Should Match 'smoke must be an object'
+        }
+    }
+
+    It 'rejects missing smoke fields without duplicate format errors' {
+        foreach ($field in @(
+            'tool_name', 'timeout_seconds', 'expected_content_types',
+            'script_path', 'script_sha256', 'arguments'
+        )) {
+            $tool = New-ValidWhitelistTool
+            $tool.type = 'mcp'
+            $tool.smoke = New-ValidMcpSmokeProfile
+            $tool.smoke.Remove($field)
+
+            $result = Test-WhitelistDocument -Document @{
+                schema_version = '1.0'; tools = @($tool)
+            }
+            $fieldErrors = @($result.Errors | Where-Object {
+                $_ -match [regex]::Escape("field '$field'")
+            })
+
+            $result.IsValid | Should Be $false
+            $fieldErrors.Count | Should Be 1
+        }
+    }
+
+    It 'rejects smoke field type errors' {
+        $cases = @(
+            @{ Field = 'tool_name'; Value = 42; Match = 'non-empty string' },
+            @{ Field = 'timeout_seconds'; Value = '10'; Match = 'integer' },
+            @{ Field = 'expected_content_types'; Value = 'text'; Match = 'array' },
+            @{ Field = 'script_path'; Value = 42; Match = 'non-empty string' },
+            @{ Field = 'script_sha256'; Value = 42; Match = 'non-empty string' }
+        )
+        foreach ($case in $cases) {
+            $tool = New-ValidWhitelistTool
+            $tool.type = 'mcp'
+            $tool.smoke = New-ValidMcpSmokeProfile -AsCustomObject
+            $tool.smoke.($case.Field) = $case.Value
+
+            $result = Test-WhitelistDocument -Document @{
+                schema_version = '1.0'; tools = @($tool)
+            }
+
+            $result.IsValid | Should Be $false
+            ($result.Errors -join '; ') | Should Match $case.Match
+            if (@('script_path', 'script_sha256') -contains $case.Field) {
+                @($result.Errors | Where-Object {
+                    $_ -match [regex]::Escape("field '$($case.Field)'")
+                }).Count | Should Be 1
+            }
+        }
+    }
+
+    It 'rejects invalid expected content type elements' {
+        $tool = New-ValidWhitelistTool
+        $tool.type = 'mcp'
+        $tool.smoke = New-ValidMcpSmokeProfile
+        $tool.smoke.expected_content_types = @('text', 42, '')
+
+        $result = Test-WhitelistDocument -Document @{
+            schema_version = '1.0'; tools = @($tool)
+        }
+
+        $result.IsValid | Should Be $false
+        ($result.Errors -join '; ') | Should Match 'non-empty strings'
+    }
+
+    It 'rejects non-object smoke arguments' {
+        $tool = New-ValidWhitelistTool
+        $tool.type = 'mcp'
+        $tool.smoke = New-ValidMcpSmokeProfile -AsCustomObject
+        $tool.smoke.arguments = @('invalid')
+
+        $result = Test-WhitelistDocument -Document @{
+            schema_version = '1.0'; tools = @($tool)
+        }
+
+        $result.IsValid | Should Be $false
+        ($result.Errors -join '; ') | Should Match 'arguments.*object'
+    }
+
+    It 'rejects smoke profiles on non-MCP tools' {
+        $tool = New-ValidWhitelistTool
+        $tool.smoke = New-ValidMcpSmokeProfile
+
+        $result = Test-WhitelistDocument -Document @{
+            schema_version = '1.0'; tools = @($tool)
+        }
+
+        $result.IsValid | Should Be $false
+        ($result.Errors -join '; ') | Should Match 'supported only for mcp tools'
     }
 
     It 'rejects unsafe or malformed MCP smoke profiles' {
@@ -189,14 +333,7 @@ Describe 'Test-WhitelistDocument' {
         foreach ($case in $cases) {
             $tool = New-ValidWhitelistTool
             $tool.type = 'mcp'
-            $tool.smoke = @{
-                tool_name = 'test-tool'
-                timeout_seconds = 10
-                expected_content_types = @('text')
-                script_path = 'scripts/smoke/mcp/test.mjs'
-                script_sha256 = ('a' * 64)
-                arguments = @{}
-            }
+            $tool.smoke = New-ValidMcpSmokeProfile
             $tool.smoke[$case.Field] = $case.Value
             $result = Test-WhitelistDocument -Document @{
                 schema_version = '1.0'; tools = @($tool)

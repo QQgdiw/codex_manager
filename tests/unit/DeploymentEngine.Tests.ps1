@@ -83,6 +83,44 @@ function Sync-TestProtectedPlanIntegrityIfExposed {
     }
 }
 
+Describe 'Copy-DeploymentValue' {
+    BeforeAll {
+        . $deploymentLibrary
+    }
+
+    It 'preserves an empty array as an array' {
+        $copy = Copy-DeploymentValue -Value ([object[]]@())
+
+        ($copy -is [System.Array]) | Should Be $true
+        @($copy).Count | Should Be 0
+        (ConvertTo-Json -InputObject $copy -Compress) | Should Be '[]'
+    }
+
+    It 'preserves a single-element array as an array' {
+        $copy = Copy-DeploymentValue -Value ([object[]]@('one'))
+
+        ($copy -is [System.Array]) | Should Be $true
+        @($copy).Count | Should Be 1
+        (ConvertTo-Json -InputObject $copy -Compress) | Should Be '["one"]'
+    }
+
+    It 'preserves nested array boundaries' {
+        $source = [object[]]::new(3)
+        $source[0] = [object[]]@()
+        $source[1] = [object[]]@('one')
+        $source[2] = [object[]]@('one', 'two')
+
+        $copy = Copy-DeploymentValue -Value $source
+
+        ($copy -is [System.Array]) | Should Be $true
+        ($copy[0] -is [System.Array]) | Should Be $true
+        ($copy[1] -is [System.Array]) | Should Be $true
+        ($copy[2] -is [System.Array]) | Should Be $true
+        (ConvertTo-Json -InputObject $copy -Compress) |
+            Should Be '[[],["one"],["one","two"]]'
+    }
+}
+
 Describe 'Deployment plan construction and validation' {
     BeforeAll {
         . $deploymentLibrary

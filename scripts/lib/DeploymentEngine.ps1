@@ -82,7 +82,7 @@ function Copy-DeploymentValue {
         $copy = @($Value | ForEach-Object {
             Copy-DeploymentValue -Value $_
         })
-        return $copy
+        return ,$copy
     }
 
     if ($Value -is [System.Management.Automation.PSCustomObject]) {

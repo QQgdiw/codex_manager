@@ -224,14 +224,25 @@ function Test-McpSmokeProfile {
             }
         }
     }
-    $scriptPath = [string](Get-ProjectMember -InputObject $Profile -Name 'script_path').Value
-    if (-not $scriptPath.StartsWith('scripts/smoke/mcp/', [StringComparison]::Ordinal) -or
-        -not $scriptPath.EndsWith('.mjs', [StringComparison]::Ordinal)) {
-        $Errors.Add("$Label field 'script_path' must be a .mjs path below scripts/smoke/mcp/.")
+    $scriptPath = Get-ProjectMember -InputObject $Profile -Name 'script_path'
+    if ($scriptPath.Exists -and $scriptPath.Value -is [string] -and
+        -not [string]::IsNullOrWhiteSpace($scriptPath.Value)) {
+        if (-not $scriptPath.Value.StartsWith(
+                'scripts/smoke/mcp/', [StringComparison]::Ordinal
+            ) -or
+            -not $scriptPath.Value.EndsWith('.mjs', [StringComparison]::Ordinal)) {
+            $Errors.Add(
+                "$Label field 'script_path' must be a .mjs path below scripts/smoke/mcp/."
+            )
+        }
     }
-    $scriptHash = [string](Get-ProjectMember -InputObject $Profile -Name 'script_sha256').Value
-    if ($scriptHash -cnotmatch '^[0-9a-f]{64}$') {
-        $Errors.Add("$Label field 'script_sha256' must be 64 lowercase hexadecimal characters.")
+    $scriptHash = Get-ProjectMember -InputObject $Profile -Name 'script_sha256'
+    if ($scriptHash.Exists -and $scriptHash.Value -is [string] -and
+        -not [string]::IsNullOrWhiteSpace($scriptHash.Value) -and
+        $scriptHash.Value -cnotmatch '^[0-9a-f]{64}$') {
+        $Errors.Add(
+            "$Label field 'script_sha256' must be 64 lowercase hexadecimal characters."
+        )
     }
     $arguments = Get-ProjectMember -InputObject $Profile -Name 'arguments'
     if (-not $arguments.Exists -or -not (Test-ProjectObject -Value $arguments.Value)) {
@@ -368,7 +379,7 @@ function Test-WhitelistDocument {
 
         $smokeMember = Get-ProjectMember -InputObject $tool -Name 'smoke'
         if ($smokeMember.Exists) {
-            if ($typeMember.Value -cne 'mcp') {
+            if ($typeMember.Value -ine 'mcp') {
                 $errors.Add("$label field 'smoke' is supported only for mcp tools.")
             }
             else {
