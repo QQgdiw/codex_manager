@@ -90,7 +90,9 @@ Describe 'Layered tool verification' {
         $result = Invoke-StaticVerification -Tool $tool
 
         $result.Status | Should Be 'static_verified'
-        (@($result.Checks) -contains 'smoke_profile_ok') | Should Be $true
+        $checks = @($result.Checks)
+        ($checks -contains 'smoke_profile_ok') | Should Be $true
+        ($checks -contains 'required_field_ok:id') | Should Be $true
     }
 
     It 'returns static failure from an injected verifier' {
@@ -103,6 +105,33 @@ Describe 'Layered tool verification' {
 
         $result.Status | Should Be 'failed'
         $result.ErrorCode | Should Be 'mcp_smoke_script_hash_mismatch'
+    }
+
+    It 'redacts sensitive values from static verifier exceptions' {
+        $sensitive = New-TestSensitiveValue
+        $tool = New-TestVerificationTool
+        $tool | Add-Member -NotePropertyName SensitiveRedactions -NotePropertyValue @($sensitive)
+        $tool | Add-Member -NotePropertyName StaticVerifier -NotePropertyValue {
+            throw "static verifier failed with $sensitive"
+        }
+
+        $result = Invoke-StaticVerification -Tool $tool
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'static_verifier_exception'
+        $result.Message | Should Be 'static verifier failed with [REDACTED]'
+        (@($result.SensitiveRedactions) -contains $sensitive) | Should Be $true
+    }
+
+    It 'fails when the static verifier member is not a scriptblock' {
+        $tool = New-TestVerificationTool
+        $tool | Add-Member -NotePropertyName StaticVerifier -NotePropertyValue 'not executable'
+
+        $result = Invoke-StaticVerification -Tool $tool
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'static_verifier_invalid_type'
+        $result.Message | Should Be 'Static verifier must be a scriptblock.'
     }
 
     It 'returns failed instead of throwing for missing required fields' {

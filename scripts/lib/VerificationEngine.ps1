@@ -349,9 +349,23 @@ function Invoke-StaticVerification {
             -ErrorCode $errorCode
     }
 
-    $verifier = Get-VerificationMemberValue -Object $Tool `
-        -Names @('StaticVerifier', 'static_verifier')
-    if ($null -ne $verifier -and $verifier -is [scriptblock]) {
+    $verifierProperty = $null
+    foreach ($name in @('StaticVerifier', 'static_verifier')) {
+        $verifierProperty = $Tool.PSObject.Properties[$name]
+        if ($null -ne $verifierProperty) {
+            break
+        }
+    }
+
+    if ($null -ne $verifierProperty -and -not ($verifierProperty.Value -is [scriptblock])) {
+        return New-VerificationResult -Tool $Tool -Level 'static' `
+            -Status 'failed' -Message 'Static verifier must be a scriptblock.' `
+            -StartedAt $startedAt -Checks $checks `
+            -ErrorCode 'static_verifier_invalid_type'
+    }
+
+    if ($null -ne $verifierProperty) {
+        $verifier = $verifierProperty.Value
         try {
             $adapterResult = & $verifier $Tool
         }
@@ -359,6 +373,7 @@ function Invoke-StaticVerification {
             return New-VerificationResult -Tool $Tool -Level 'static' `
                 -Status 'failed' -Message $_.Exception.Message `
                 -StartedAt $startedAt -Checks $checks `
+                -SensitiveRedactions (Get-VerificationSensitiveRedactions -Tool $Tool) `
                 -ErrorCode 'static_verifier_exception'
         }
         $result = ConvertTo-VerificationResultFromAdapter `
