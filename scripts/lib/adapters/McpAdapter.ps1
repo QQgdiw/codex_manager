@@ -1228,6 +1228,48 @@ function Test-McpGetOutputContainsName {
     return $false
 }
 
+function Test-McpAdapterStringArrayEqual {
+    param(
+        [AllowNull()]
+        [object[]]$Left,
+
+        [AllowNull()]
+        [object[]]$Right
+    )
+
+    $leftValues = @($Left | ForEach-Object { [string]$_ })
+    $rightValues = @($Right | ForEach-Object { [string]$_ })
+    if ($leftValues.Count -ne $rightValues.Count) {
+        return $false
+    }
+    for ($index = 0; $index -lt $leftValues.Count; $index++) {
+        if ($leftValues[$index] -cne $rightValues[$index]) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Test-McpGetOutputMatchesPlan {
+    param(
+        [AllowNull()]
+        [object]$JsonObject,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Plan
+    )
+
+    return (
+        [string]$JsonObject.name -ceq $Plan.McpName -and
+        [bool]$JsonObject.enabled -and
+        [string]$JsonObject.transport.type -ceq 'stdio' -and
+        [string]$JsonObject.transport.command -ceq $Plan.ResolvedCommand -and
+        (Test-McpAdapterStringArrayEqual `
+            -Left @($JsonObject.transport.args) `
+            -Right @($Plan.ResolvedArguments))
+    )
+}
+
 function Test-ManagedMcpSmokeProfile {
     param([object]$Plan)
 
@@ -1314,6 +1356,14 @@ function Test-ManagedMcp {
             -Message "Codex MCP '$($Plan.McpName)' was not found in MCP get output." `
             -Checks @('codex mcp get <name> --json') `
             -ErrorCode 'mcp_not_found'
+    }
+
+    if (-not (Test-McpGetOutputMatchesPlan -JsonObject $json -Plan $Plan)) {
+        return New-McpVerificationResult -Plan $Plan `
+            -Status 'failed' `
+            -Message "Codex MCP '$($Plan.McpName)' transport configuration does not match the approved plan." `
+            -Checks @('codex mcp get <name> --json') `
+            -ErrorCode 'mcp_config_mismatch'
     }
 
     return New-McpVerificationResult -Plan $Plan `

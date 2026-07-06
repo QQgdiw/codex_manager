@@ -726,15 +726,47 @@ Describe 'Test-ManagedMcp' {
     It 'uses codex mcp get name --json to verify the MCP exists' {
         New-TestStartupFile
         $plan = Get-McpInstallPlan -Tool (New-TestMcpTool)
+        $actual = @{
+            name = 'local-docs'
+            enabled = $true
+            transport = @{
+                type = 'stdio'
+                command = 'node'
+                args = @([IO.Path]::GetFullPath((Join-Path $TestDrive 'dist\index.js')))
+                cwd = $null
+            }
+        } | ConvertTo-Json -Depth 8 -Compress
 
         $result = Test-ManagedMcp -Plan $plan -Executor {
             param($Command)
             ($Command.Arguments -join '|') | Should Be 'mcp|get|local-docs|--json'
-            New-SuccessProcessResult -StdOut '{"name":"local-docs","transport":"stdio"}'
+            New-SuccessProcessResult -StdOut $actual
         }
 
         $result.Status | Should Be 'load_verified'
         $result.Checks[0] | Should Match 'local-docs'
+    }
+
+    It 'requires codex MCP transport command and arguments to match the approved plan' {
+        New-TestStartupFile
+        $plan = Get-McpInstallPlan -Tool (New-TestMcpTool)
+        $actual = @{
+            name = 'local-docs'
+            enabled = $true
+            transport = @{
+                type = 'stdio'
+                command = 'node'
+                args = @('E:\tampered\index.js')
+                cwd = $null
+            }
+        } | ConvertTo-Json -Depth 8 -Compress
+
+        $result = Test-ManagedMcp -Plan $plan -Executor {
+            param($Command) New-SuccessProcessResult -StdOut $actual
+        }
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'mcp_config_mismatch'
     }
 
     It 'reports malformed JSON separately from missing configuration' {

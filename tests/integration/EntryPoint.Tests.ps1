@@ -291,12 +291,16 @@ function ConvertFrom-EntryPointJson {
 }
 
 function New-FakeCodexCli {
-    param([string]$Root)
+    param(
+        [string]$Root,
+        [string]$McpStartupFile = (Join-Path $Root 'server\dist\index.js')
+    )
 
     $bin = Join-Path $Root 'fake-bin'
     New-Item -ItemType Directory -Path $bin -Force | Out-Null
     $log = Join-Path $Root 'fake-codex.log'
     $script = Join-Path $bin 'codex.cmd'
+    $mcpStartupFileJson = $McpStartupFile.Replace('\', '\\')
     Set-Content -LiteralPath $script -Encoding ASCII -Value @"
 @echo off
 echo %~1 %~2 %~3 %~4 %~5 %~6 %~7>>"%CODEX_TOOL_MANAGER_FAKE_LOG%"
@@ -317,7 +321,7 @@ if "%~1"=="mcp" if "%~2"=="add" (
   exit /b 0
 )
 if "%~1"=="mcp" if "%~2"=="get" (
-  echo {"name":"%~3","configured":true}
+  echo {"name":"%~3","enabled":true,"transport":{"type":"stdio","command":"node","args":["$mcpStartupFileJson"],"cwd":null}}
   exit /b 0
 )
 echo unsupported fake codex command: %* 1>&2
@@ -706,7 +710,7 @@ Describe 'Codex tool manager entry point' {
     It 'verifies an approved mcp through the Codex MCP get output' {
         $root = Join-Path $TestDrive 'mcp-verify'
         $fixture = New-EntryPointMcpFixture -Root $root
-        $fake = New-FakeCodexCli -Root $root
+        $fake = New-FakeCodexCli -Root $root -McpStartupFile ([IO.Path]::GetFullPath($fixture.StartupFile))
         $oldPath = $env:PATH
         $oldLog = $env:CODEX_TOOL_MANAGER_FAKE_LOG
         try {
