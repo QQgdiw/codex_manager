@@ -149,6 +149,7 @@ function New-McpApprovedSnapshotSummary {
         source = Get-McpAdapterString -InputObject $Snapshot -Names @('source', 'Source')
         version = Get-McpAdapterString -InputObject $Snapshot -Names @('version', 'Version')
         sha256 = Get-McpAdapterString -InputObject $Snapshot -Names @('sha256', 'Hash')
+        smoke = Get-McpAdapterMember -InputObject $Snapshot -Names @('smoke', 'Smoke')
     }
 }
 
@@ -694,7 +695,223 @@ function Get-McpInstallPlan {
             -Arguments @('mcp', 'get', $mcpName, '--json')
         StartupFilePath = $startupPath
         StartupFileExists = $startupExists
+        WorkingDirectory = $workingDirectory
+        ResolvedCommand = $resolvedCommand
+        ResolvedArguments = @($resolvedArgs)
         SensitiveRedactions = @($redactions)
+    }
+}
+
+function New-McpSmokePlanIssue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Status,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ErrorCode,
+
+        [AllowNull()]
+        [object]$InstallPlan
+    )
+
+    return [pscustomobject][ordered]@{
+        Status = $Status
+        Message = $Message
+        ErrorCode = $ErrorCode
+        InstallPlan = $InstallPlan
+    }
+}
+
+function Test-McpAdapterReparsePoint {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Paths
+    )
+
+    foreach ($path in $Paths) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            continue
+        }
+        $item = Get-Item -LiteralPath $path -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Get-McpSmokePlan {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$InstallPlan,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ProjectRoot
+    )
+
+    if ($InstallPlan.Status -ne 'planned') {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message $InstallPlan.Message `
+            -ErrorCode 'mcp_install_plan_invalid' `
+            -InstallPlan $InstallPlan
+    }
+
+    $profile = Get-McpAdapterMember -InputObject $InstallPlan.ApprovedSnapshot `
+        -Names @('smoke', 'Smoke')
+    if ($null -eq $profile) {
+        return New-McpSmokePlanIssue -Status 'blocked' `
+            -Message 'MCP smoke verifier profile is missing.' `
+            -ErrorCode 'smoke_verifier_missing' `
+            -InstallPlan $InstallPlan
+    }
+
+    if ($InstallPlan.Transport -ne 'stdio') {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP smoke verification requires stdio transport.' `
+            -ErrorCode 'mcp_smoke_profile_invalid' `
+            -InstallPlan $InstallPlan
+    }
+
+    $toolName = Get-McpAdapterString -InputObject $profile -Names @('tool_name', 'ToolName')
+    $scriptPathValue = Get-McpAdapterString -InputObject $profile `
+        -Names @('script_path', 'ScriptPath')
+    $expectedSha256 = Get-McpAdapterString -InputObject $profile `
+        -Names @('script_sha256', 'ScriptSha256')
+    $timeoutValue = Get-McpAdapterString -InputObject $profile `
+        -Names @('timeout_seconds', 'TimeoutSeconds')
+    if ([string]::IsNullOrWhiteSpace($toolName) -or
+        [string]::IsNullOrWhiteSpace($scriptPathValue) -or
+        [string]::IsNullOrWhiteSpace($expectedSha256) -or
+        [string]::IsNullOrWhiteSpace($timeoutValue)) {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP smoke verifier profile is incomplete.' `
+            -ErrorCode 'mcp_smoke_profile_invalid' `
+            -InstallPlan $InstallPlan
+    }
+
+    $timeoutSeconds = 0
+    if (-not [int]::TryParse($timeoutValue, [ref]$timeoutSeconds) -or $timeoutSeconds -le 0) {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP smoke verifier timeout_seconds must be a positive integer.' `
+            -ErrorCode 'mcp_smoke_profile_invalid' `
+            -InstallPlan $InstallPlan
+    }
+
+    $projectRootPath = [IO.Path]::GetFullPath($ProjectRoot)
+    $scriptsPath = [IO.Path]::GetFullPath((Join-Path $projectRootPath 'scripts'))
+    $smokePath = [IO.Path]::GetFullPath((Join-Path $scriptsPath 'smoke'))
+    $mcpPath = [IO.Path]::GetFullPath((Join-Path $smokePath 'mcp'))
+    $scriptCandidate = if ([IO.Path]::IsPathRooted($scriptPathValue)) {
+        $scriptPathValue
+    }
+    else {
+        Join-Path $projectRootPath $scriptPathValue
+    }
+    $resolvedScriptPath = [IO.Path]::GetFullPath($scriptCandidate)
+
+    if (-not (Test-McpAdapterPathWithinRoot -Path $resolvedScriptPath -Root $mcpPath)) {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP smoke script path must stay below scripts/smoke/mcp.' `
+            -ErrorCode 'mcp_smoke_script_path_rejected' `
+            -InstallPlan $InstallPlan
+    }
+
+    if (Test-McpAdapterReparsePoint -Paths @(
+            $scriptsPath,
+            $smokePath,
+            $mcpPath,
+            $resolvedScriptPath
+        )) {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP smoke script path must not contain reparse points.' `
+            -ErrorCode 'mcp_smoke_script_path_rejected' `
+            -InstallPlan $InstallPlan
+    }
+
+    if (-not (Test-Path -LiteralPath $resolvedScriptPath -PathType Leaf)) {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP smoke script file does not exist.' `
+            -ErrorCode 'mcp_smoke_script_missing' `
+            -InstallPlan $InstallPlan
+    }
+
+    $actualSha256 = (Get-FileHash -LiteralPath $resolvedScriptPath -Algorithm SHA256).
+        Hash.ToLowerInvariant()
+    if ($actualSha256 -ne $expectedSha256.ToLowerInvariant()) {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP smoke script SHA256 does not match the approved profile.' `
+            -ErrorCode 'mcp_smoke_script_hash_mismatch' `
+            -InstallPlan $InstallPlan
+    }
+
+    $runnerPath = Join-Path $projectRootPath 'scripts\node\mcp-smoke-runner.mjs'
+    if (-not (Test-Path -LiteralPath $runnerPath -PathType Leaf)) {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP smoke runner script does not exist.' `
+            -ErrorCode 'mcp_smoke_runner_missing' `
+            -InstallPlan $InstallPlan
+    }
+
+    $workingDirectory = Get-McpAdapterString -InputObject $InstallPlan `
+        -Names @('WorkingDirectory', 'working_directory')
+    if ([string]::IsNullOrWhiteSpace($workingDirectory)) {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP smoke profile requires a stdio working directory.' `
+            -ErrorCode 'mcp_smoke_profile_invalid' `
+            -InstallPlan $InstallPlan
+    }
+    $workingDirectoryPath = [IO.Path]::GetFullPath($workingDirectory)
+    $sdkClientPath = Join-Path $workingDirectoryPath `
+        'node_modules\@modelcontextprotocol\sdk\dist\esm\client\index.js'
+    $sdkStdioPath = Join-Path $workingDirectoryPath `
+        'node_modules\@modelcontextprotocol\sdk\dist\esm\client\stdio.js'
+    foreach ($sdkPath in @($sdkClientPath, $sdkStdioPath)) {
+        if (-not (Test-Path -LiteralPath $sdkPath -PathType Leaf)) {
+            return New-McpSmokePlanIssue -Status 'failed' `
+                -Message 'MCP SDK client files required by the smoke runner are missing.' `
+                -ErrorCode 'mcp_smoke_sdk_missing' `
+                -InstallPlan $InstallPlan
+        }
+    }
+
+    try {
+        $serverFilePath = [string]@(
+            Get-Command -Name $InstallPlan.ResolvedCommand -CommandType Application `
+                -ErrorAction Stop
+        )[0].Source
+    }
+    catch {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP stdio server command could not be resolved.' `
+            -ErrorCode 'mcp_smoke_server_command_not_found' `
+            -InstallPlan $InstallPlan
+    }
+
+    return [pscustomobject][ordered]@{
+        Status = 'planned'
+        Message = 'MCP smoke verification is planned.'
+        ErrorCode = $null
+        InstallPlan = $InstallPlan
+        ToolName = [string]$toolName
+        Arguments = Get-McpAdapterMember -InputObject $profile -Names @('arguments', 'Arguments')
+        TimeoutSeconds = [int]$timeoutSeconds
+        ExpectedContentTypes = @(
+            Get-McpAdapterArray -Value (
+                Get-McpAdapterMember -InputObject $profile `
+                    -Names @('expected_content_types', 'ExpectedContentTypes')
+            )
+        )
+        ScriptPath = $resolvedScriptPath
+        ScriptSha256 = [string]$expectedSha256
+        RunnerPath = $runnerPath
+        TempRootParent = (Join-Path $projectRootPath '.tmp\mcp-smoke')
+        SdkClientPath = $sdkClientPath
+        SdkStdioPath = $sdkStdioPath
+        ServerFilePath = $serverFilePath
     }
 }
 
@@ -920,6 +1137,30 @@ function Test-McpGetOutputContainsName {
         }
     }
     return $false
+}
+
+function Test-ManagedMcpSmokeProfile {
+    param([object]$Plan)
+
+    if ($Plan.Status -eq 'blocked') {
+        return @{
+            Status = 'blocked'
+            Message = $Plan.Message
+            ErrorCode = $Plan.ErrorCode
+        }
+    }
+    if ($Plan.Status -ne 'planned') {
+        return @{
+            Status = 'failed'
+            Message = $Plan.Message
+            ErrorCode = $Plan.ErrorCode
+        }
+    }
+    return @{
+        Status = 'static_verified'
+        Message = 'MCP smoke profile paths and hashes were verified.'
+        Checks = @('mcp_smoke_profile_valid', 'mcp_smoke_script_hash_verified')
+    }
 }
 
 function Test-ManagedMcp {

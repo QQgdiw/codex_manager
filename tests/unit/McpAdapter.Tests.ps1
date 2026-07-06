@@ -26,6 +26,14 @@ function New-TestMcpTool {
             working_directory = $TestDrive
             startup_file = 'dist/index.js'
         }
+        smoke = [pscustomobject]@{
+            tool_name = 'local-docs'
+            timeout_seconds = 10
+            expected_content_types = @('text')
+            script_path = 'scripts/smoke/mcp/local-docs.mjs'
+            script_sha256 = ('0' * 64)
+            arguments = [pscustomobject]@{}
+        }
         sensitive_redactions = @('SECRET-TOKEN')
     }
     foreach ($key in $SnapshotOverrides.Keys) {
@@ -476,6 +484,116 @@ Describe 'Uninstall-ManagedMcp' {
         $result.Status | Should Be 'succeeded'
         $script:calls.Count | Should Be 1
         ($script:calls[0].Arguments -join '|') | Should Be 'mcp|remove|local-docs'
+    }
+}
+
+Describe 'Get-McpSmokePlan' {
+    BeforeAll {
+        . $mcpLibrary
+    }
+
+    It 'resolves an approved lifecycle script below scripts smoke mcp' {
+        $project = Join-Path $TestDrive 'project'
+        $scriptDir = Join-Path $project 'scripts\smoke\mcp'
+        New-Item -ItemType Directory -Path $scriptDir -Force | Out-Null
+        $scriptPath = Join-Path $scriptDir 'test.mjs'
+        Set-Content -LiteralPath $scriptPath -Encoding UTF8 -Value 'process.exit(0);'
+        $runnerPath = Join-Path $project 'scripts\node\mcp-smoke-runner.mjs'
+        New-Item -ItemType Directory -Path (Split-Path $runnerPath) -Force | Out-Null
+        Set-Content -LiteralPath $runnerPath -Encoding UTF8 -Value 'process.exit(0);'
+        $sdk = Join-Path $TestDrive 'node_modules\@modelcontextprotocol\sdk\dist\esm\client'
+        New-Item -ItemType Directory -Path $sdk -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $sdk 'index.js') -Encoding UTF8 -Value 'export {};'
+        Set-Content -LiteralPath (Join-Path $sdk 'stdio.js') -Encoding UTF8 -Value 'export {};'
+        $hash = (Get-FileHash $scriptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        New-TestStartupFile
+        $install = Get-McpInstallPlan -Tool (New-TestMcpTool -SnapshotOverrides @{
+            smoke = [pscustomobject]@{
+                tool_name = 'local_tool'; timeout_seconds = 10
+                expected_content_types = @('text')
+                script_path = 'scripts/smoke/mcp/test.mjs'
+                script_sha256 = $hash
+                arguments = [pscustomobject]@{ value = 1 }
+            }
+        })
+
+        $plan = Get-McpSmokePlan -InstallPlan $install -ProjectRoot $project
+
+        $plan.Status | Should Be 'planned'
+        $plan.ScriptPath | Should Be ([IO.Path]::GetFullPath($scriptPath))
+        $plan.ToolName | Should Be 'local_tool'
+    }
+
+    It 'rejects a lifecycle script path that escapes the approved directory' {
+        $project = Join-Path $TestDrive 'escape-project'
+        $outside = Join-Path $project 'scripts\smoke\outside.mjs'
+        New-Item -ItemType Directory -Path (Split-Path $outside) -Force | Out-Null
+        Set-Content -LiteralPath $outside -Encoding UTF8 -Value 'process.exit(0);'
+        New-TestStartupFile
+        $install = Get-McpInstallPlan -Tool (New-TestMcpTool -SnapshotOverrides @{
+            smoke = [pscustomobject]@{
+                tool_name = 'local_tool'; timeout_seconds = 10
+                expected_content_types = @('text')
+                script_path = 'scripts/smoke/mcp/../outside.mjs'
+                script_sha256 = (Get-FileHash $outside).Hash.ToLowerInvariant()
+                arguments = [pscustomobject]@{}
+            }
+        })
+
+        $plan = Get-McpSmokePlan -InstallPlan $install -ProjectRoot $project
+
+        $plan.Status | Should Be 'failed'
+        $plan.ErrorCode | Should Be 'mcp_smoke_script_path_rejected'
+    }
+
+    It 'rejects a lifecycle path containing a reparse point' {
+        $project = Join-Path $TestDrive 'reparse-project'
+        $approvedParent = Join-Path $project 'scripts\smoke'
+        $outside = Join-Path $TestDrive 'outside-lifecycle'
+        New-Item -ItemType Directory -Path $approvedParent -Force | Out-Null
+        New-Item -ItemType Directory -Path $outside -Force | Out-Null
+        $outsideScript = Join-Path $outside 'test.mjs'
+        Set-Content -LiteralPath $outsideScript -Encoding UTF8 -Value 'process.exit(0);'
+        New-Item -ItemType Junction -Path (Join-Path $approvedParent 'mcp') `
+            -Target $outside | Out-Null
+        New-TestStartupFile
+        $install = Get-McpInstallPlan -Tool (New-TestMcpTool -SnapshotOverrides @{
+            smoke = [pscustomobject]@{
+                tool_name = 'local_tool'; timeout_seconds = 10
+                expected_content_types = @('text')
+                script_path = 'scripts/smoke/mcp/test.mjs'
+                script_sha256 = (Get-FileHash $outsideScript).Hash.ToLowerInvariant()
+                arguments = [pscustomobject]@{}
+            }
+        })
+
+        $plan = Get-McpSmokePlan -InstallPlan $install -ProjectRoot $project
+
+        $plan.Status | Should Be 'failed'
+        $plan.ErrorCode | Should Be 'mcp_smoke_script_path_rejected'
+    }
+
+    It 'rejects a lifecycle script hash mismatch' {
+        $project = Join-Path $TestDrive 'hash-project'
+        $scriptDir = Join-Path $project 'scripts\smoke\mcp'
+        New-Item -ItemType Directory -Path $scriptDir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $scriptDir 'test.mjs') `
+            -Encoding UTF8 -Value 'process.exit(0);'
+        New-TestStartupFile
+        $install = Get-McpInstallPlan -Tool (New-TestMcpTool -SnapshotOverrides @{
+            smoke = [pscustomobject]@{
+                tool_name = 'local_tool'; timeout_seconds = 10
+                expected_content_types = @('text')
+                script_path = 'scripts/smoke/mcp/test.mjs'
+                script_sha256 = ('0' * 64)
+                arguments = [pscustomobject]@{}
+            }
+        })
+
+        $plan = Get-McpSmokePlan -InstallPlan $install -ProjectRoot $project
+
+        $plan.Status | Should Be 'failed'
+        $plan.ErrorCode | Should Be 'mcp_smoke_script_hash_mismatch'
     }
 }
 
