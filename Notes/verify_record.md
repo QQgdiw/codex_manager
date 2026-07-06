@@ -256,3 +256,26 @@ This file is maintained by `Write-VerificationRecord`.
 - 回滚：未执行，因为部署、load 和人工 smoke 均成功
 - 残留：未发现目标服务器子进程；一次性客户端和输出位于已忽略的 `.tmp` 目录
 - 凭据：本工具无需凭据，本记录未读取或保存认证文件正文
+
+## 验证记录：Sequential Thinking MCP 自动 smoke 验证
+
+- 工具：Model Context Protocol Sequential Thinking Server
+- 白名单 ID：`mcp.modelcontextprotocol.sequential-thinking`
+- 工具类型：MCP；服务器版本：`0.6.2`
+- 验证时间：`2026-07-06`
+- 启动配置：用户级 Codex MCP，名称为 `modelcontextprotocol-sequential-thinking`
+- 启动命令：`node E:\codex\MCP\servers\src\sequentialthinking\dist\index.js`
+- 生命周期脚本：`scripts/smoke/mcp/sequential-thinking.mjs`
+- 生命周期脚本 SHA-256：`e4d836f6f5c542cd257e147b41480784cbb855e2f7b781012c9b990764b39a63`
+- 静态验证：`static_verified`
+- 加载验证：`load_verified`
+- 自动 smoke 验证：`smoke_verified`
+- 自动 smoke 调用工具：`sequentialthinking`
+- 自动 smoke 内容类型：`text`
+- 错误码：无
+- 综合结论：自动 MCP smoke verifier 已接入并通过真实 sequential-thinking 验证；本记录不保存完整 thought、MCP 返回正文或敏感参数。
+- 运行边界：Node permission 仅限制本地文件读写范围，不提供网络硬隔离。
+- 回滚/卸载：verifier 未执行卸载，也未调用 `codex mcp remove`。
+- 残留：未发现目标 `sequentialthinking\dist\index.js` Node 服务器进程；`.tmp\mcp-smoke` 下 operation 子目录数量为 0。
+- 额外说明：真实配置在验证前已重新部署该 approved MCP，因为当前用户级 Codex MCP 列表中不存在该条目；部署通过管理器执行，未手写 `codex mcp add`。
+- filesystem 后续边界：filesystem MCP 的允许根目录已确认为 `E:\codex`，但尚未部署或执行功能性 smoke。

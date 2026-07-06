@@ -41,12 +41,16 @@
 - [ ] 为 Skill 补充真正的运行时 smoke verifier；当前不伪造 Codex 运行时执行成功。
 - [x] 接入 MCP 真实部署适配器和 load verifier；自动 load verifier 当前只证明 Codex MCP 配置可查询到该 MCP。
 - [x] 完成 sequential-thinking MCP 的用户级真实环境部署与 load verification；真实配置已登记绝对启动路径，静态验证和 load verification 均通过。
-- [ ] 为 MCP 补充自动化功能性 smoke verifier；sequential-thinking 已完成人工协议 smoke，但管理器仍因 `smoke_verifier_missing` 保守返回 blocked。
+- [x] 为 MCP 补充自动化功能性 smoke verifier；sequential-thinking 已通过管理器自动 smoke 验证。
 - [x] 自动 MCP smoke verifier Task 1：扩展白名单 smoke schema，并把批准 smoke profile 写入 approved snapshot。
 - [x] 自动 MCP smoke verifier Task 2：为受管进程增加显式环境隔离，清空继承环境后只传入白名单变量。
 - [x] 自动 MCP smoke verifier Task 3：让静态验证器支持适配器注入，并修复 StaticVerifier 异常脱敏和类型错误边界。
 - [x] 自动 MCP smoke verifier Task 4：实现通用 Node MCP stdio smoke runner，并完成人工质量门禁；目标集成测试 14/14、全量集成测试 43/43 通过。
-- [ ] 自动 MCP smoke verifier Task 5：实现 MCP smoke plan 生成与静态安全校验。
+- [x] 自动 MCP smoke verifier Task 5：实现 MCP smoke plan 生成与静态安全校验。
+- [x] 自动 MCP smoke verifier Task 6：加固 MCP load verifier，校验 enabled、transport、command 和 args。
+- [x] 自动 MCP smoke verifier Task 7：执行 prepare、runner、validate、cleanup 生命周期，并处理 cleanup/residual 失败边界。
+- [x] 自动 MCP smoke verifier Task 8：接线入口，并为 sequential-thinking 添加 lifecycle script 和白名单 smoke profile。
+- [x] 自动 MCP smoke verifier Task 9：完成真实环境自动 smoke 验证、残留检查和记录更新。
 - [ ] 为插件补充真正的功能性 smoke verifier；当前只证明 load 可见，不伪造插件功能成功。
 - [ ] 后续如做审批可视化，应以 `Resources/approval_review.toml` 为数据源，而不是解析 Markdown。
 - [ ] 下一次更新 `Resources/github_market.md` 时继续执行跨周去重，已收录仓库不参与后续周榜名额。

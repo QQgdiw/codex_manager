@@ -171,3 +171,13 @@
 - Fix: Linux process snapshots now prefer `/proc/<pid>/stat` and use field 22 `starttime` as `startTick`; the portable `ps` fallback only supplies topology and is not considered kill-verifiable on POSIX.
 - Fix: non-Windows cleanup identity requires `startTick`; if the expected or current process lacks it while the PID exists, cleanup throws `mcp_smoke_cleanup_failed` before any terminate call.
 - GREEN evidence: `.task4-posix-green-mcp-smoke.log` passed 18/18, `.task4-posix-node-check.log` exit code 0, and `.task4-posix-diff-check.log` exit code 0 with only a CRLF warning from Git.
+
+## 2026-07-06：sequential-thinking MCP 自动 smoke 验证闭环
+
+- 重新生成单工具 pilot 配置并执行 plan：退出码 0，计划条目 1，Errors 为空。
+- 初次 verify 失败在 load 层：`codex mcp get modelcontextprotocol-sequential-thinking --json` 返回未找到该 MCP。根因是真实用户级 Codex MCP 配置中当时只存在 `node_repl`，sequential-thinking 条目已不存在。
+- 使用管理器 `deploy -PlanPath .\.tmp\real-pilot\auto-smoke-plan.json` 重新部署 approved sequential-thinking MCP，部署状态为 `succeeded`；未手写 `codex mcp add`。
+- 重新执行 verify 后整体状态为 `succeeded`：static=`static_verified`、load=`load_verified`、smoke=`smoke_verified`。
+- 真实配置核验：`modelcontextprotocol-sequential-thinking` enabled=true，transport=`stdio`，command=`node`，args 为绝对路径 `E:\codex\MCP\servers\src\sequentialthinking\dist\index.js`。
+- 残留核验：目标 sequential-thinking Node 服务器进程数量为 0；`.tmp\mcp-smoke` operation 子目录数量为 0。
+- 记录边界：自动 smoke 只记录工具名、内容类型和错误码，不记录完整 thought 或 MCP 返回正文；Node permission 不提供网络硬隔离；verifier 不执行卸载。
