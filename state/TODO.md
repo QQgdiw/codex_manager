@@ -62,3 +62,8 @@
 - [x] Remove Windows `taskkill /T` usage; cleanup now terminates verified processes one at a time.
 - [x] Reject non-integer and above-Node-timer-limit `timeoutSeconds` values with `mcp_smoke_invalid_request`.
 - [x] Verification: RED target test failed 4 expected checks; GREEN target `McpSmokeRunner.Tests.ps1` passed 16/16; `node --check` and `git diff --check` exit code 0.
+## 2026-07-06 Task 4 POSIX identity review follow-up
+
+- [x] Replace POSIX cleanup identity matching with high precision Linux `/proc/<pid>/stat` field 22 `starttime` ticks where available.
+- [x] Fail cleanup verification with `mcp_smoke_cleanup_failed` when a non-Windows process lacks high precision identity.
+- [x] Verification: RED target test failed 5 expected checks; GREEN target `McpSmokeRunner.Tests.ps1` passed 18/18; `node --check` and `git diff --check` exit code 0.

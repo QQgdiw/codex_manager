@@ -69,3 +69,6 @@
 
 - MCP smoke runner cleanup now carries PID identity metadata and revalidates it before termination.
 - Windows cleanup intentionally avoids `taskkill /T`; timeout seconds are capped to positive integers within Node timer limits.
+## 2026-07-06 Task 4 POSIX Identity Note
+
+- POSIX MCP smoke cleanup must not rely on second-granularity `lstart`. Linux uses `/proc/<pid>/stat` field 22 `starttime` ticks; if high precision identity is unavailable, cleanup verification fails before terminate.

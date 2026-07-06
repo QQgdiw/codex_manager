@@ -266,7 +266,7 @@ await writeFile(process.argv[3], JSON.stringify(result));
         ($commands.win32.terminate.args -join ' ') | Should Be '/PID 123 /F'
         ($commands.win32.snapshot.args -join ' ') | Should Match 'CreationDate'
         $commands.posix.snapshot.command | Should Be 'ps'
-        ($commands.posix.snapshot.args -join ' ') | Should Be '-eo pid=,ppid=,lstart='
+        ($commands.posix.snapshot.args -join ' ') | Should Be '-eo pid=,ppid='
     }
 
     It 'does not terminate stale or reused process identities' {
@@ -278,11 +278,11 @@ import { pathToFileURL } from "node:url";
 const runner = await import(pathToFileURL(process.argv[2]).href);
 const terminated = [];
 const residual = await runner.cleanupProcessTree(
-  [{ pid: 321, parentPid: 1, startedAt: "old-start" }],
+  [{ pid: 321, parentPid: 1, startTick: "100" }],
   "linux",
   {
     snapshotProcessRows: async () => [
-      { pid: 321, parentPid: 1, startedAt: "new-start" }
+      { pid: 321, parentPid: 1, startTick: "200" }
     ],
     processExists: () => true,
     terminatePid: async (pid) => terminated.push(pid),
@@ -298,6 +298,69 @@ await writeFile(process.argv[3], JSON.stringify({ terminated, residual }));
         @($probe.residual).Count | Should Be 0
     }
 
+    It 'does not match POSIX identities that share lstart but have different start ticks' {
+        $probePath = Join-Path $TestDrive 'same-second-cleanup-probe.mjs'
+        $probeResultPath = Join-Path $TestDrive 'same-second-cleanup-result.json'
+        [IO.File]::WriteAllText($probePath, @'
+import { writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+const runner = await import(pathToFileURL(process.argv[2]).href);
+const terminated = [];
+const residual = await runner.cleanupProcessTree(
+  [{ pid: 654, parentPid: 1, startedAt: "Mon Jul  6 12:00:00 2026", startTick: "111111" }],
+  "linux",
+  {
+    snapshotProcessRows: async () => [
+      { pid: 654, parentPid: 1, startedAt: "Mon Jul  6 12:00:00 2026", startTick: "222222" }
+    ],
+    processExists: () => true,
+    terminatePid: async (pid) => terminated.push(pid),
+    forceTerminatePid: async (pid) => terminated.push(pid)
+  }
+);
+await writeFile(process.argv[3], JSON.stringify({ terminated, residual }));
+'@, $utf8NoBom)
+        & node $probePath $runnerPath $probeResultPath 2> (Join-Path $TestDrive 'same-second-cleanup-stderr.log')
+        $LASTEXITCODE | Should Be 0
+        $probe = Get-Content $probeResultPath -Raw | ConvertFrom-Json
+        @($probe.terminated).Count | Should Be 0
+        @($probe.residual).Count | Should Be 0
+    }
+
+    It 'fails POSIX cleanup verification instead of terminating when high precision identity is missing' {
+        $probePath = Join-Path $TestDrive 'missing-tick-cleanup-probe.mjs'
+        $probeResultPath = Join-Path $TestDrive 'missing-tick-cleanup-result.json'
+        [IO.File]::WriteAllText($probePath, @'
+import { writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+const runner = await import(pathToFileURL(process.argv[2]).href);
+const terminated = [];
+let errorCode = null;
+try {
+  await runner.cleanupProcessTree(
+    [{ pid: 777, parentPid: 1, startedAt: "Mon Jul  6 12:00:00 2026" }],
+    "linux",
+    {
+      snapshotProcessRows: async () => [
+        { pid: 777, parentPid: 1, startedAt: "Mon Jul  6 12:00:00 2026" }
+      ],
+      processExists: () => true,
+      terminatePid: async (pid) => terminated.push(pid),
+      forceTerminatePid: async (pid) => terminated.push(pid)
+    }
+  );
+} catch (error) {
+  errorCode = error.code;
+}
+await writeFile(process.argv[3], JSON.stringify({ terminated, errorCode }));
+'@, $utf8NoBom)
+        & node $probePath $runnerPath $probeResultPath 2> (Join-Path $TestDrive 'missing-tick-cleanup-stderr.log')
+        $LASTEXITCODE | Should Be 0
+        $probe = Get-Content $probeResultPath -Raw | ConvertFrom-Json
+        $probe.errorCode | Should Be 'mcp_smoke_cleanup_failed'
+        @($probe.terminated).Count | Should Be 0
+    }
+
     It 'terminates matching descendants leaf-first after identity verification' {
         $probePath = Join-Path $TestDrive 'matching-cleanup-probe.mjs'
         $probeResultPath = Join-Path $TestDrive 'matching-cleanup-result.json'
@@ -308,8 +371,8 @@ const runner = await import(pathToFileURL(process.argv[2]).href);
 const live = new Set([10, 11]);
 const terminated = [];
 const rows = [
-  { pid: 10, parentPid: 1, startedAt: "root-start" },
-  { pid: 11, parentPid: 10, startedAt: "child-start" }
+  { pid: 10, parentPid: 1, startTick: "1000" },
+  { pid: 11, parentPid: 10, startTick: "1001" }
 ];
 const residual = await runner.cleanupProcessTree(rows, "linux", {
   snapshotProcessRows: async () => rows.filter((row) => live.has(row.pid)),

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, writeFile, realpath } from "node:fs/promises";
+import { readdir, readFile, writeFile, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
@@ -94,7 +94,7 @@ export function nativeProcessCommands(platform, pid) {
     };
   }
   return {
-    snapshot: { command: "ps", args: ["-eo", "pid=,ppid=,lstart="] },
+    snapshot: { command: "ps", args: ["-eo", "pid=,ppid="] },
     terminate: null,
   };
 }
@@ -126,13 +126,42 @@ function parseProcessRows(platform, stdout) {
   }
   return stdout
     .split(/\r?\n/u)
-    .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/u))
+    .map((line) => line.trim().match(/^(\d+)\s+(\d+)(?:\s+(.+))?$/u))
     .filter(Boolean)
     .map((match) => ({
       pid: Number(match[1]),
       parentPid: Number(match[2]),
-      startedAt: match[3].trim(),
+      startedAt: match[3]?.trim() ?? null,
+      startTick: null,
     }));
+}
+
+function parseLinuxProcStat(stat) {
+  const openParen = stat.indexOf("(");
+  const closeParen = stat.lastIndexOf(")");
+  if (openParen < 0 || closeParen < openParen) return null;
+  const pid = Number(stat.slice(0, openParen).trim());
+  const fields = stat.slice(closeParen + 1).trim().split(/\s+/u);
+  const parentPid = Number(fields[1]);
+  const startTick = fields[19];
+  if (!Number.isInteger(pid) || !Number.isInteger(parentPid) || !startTick) return null;
+  return { pid, parentPid, startedAt: null, startTick };
+}
+
+async function snapshotLinuxProcRows(procRoot = "/proc") {
+  const entries = await readdir(procRoot, { withFileTypes: true });
+  const rows = await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory() && /^\d+$/u.test(entry.name))
+      .map(async (entry) => {
+        try {
+          return parseLinuxProcStat(await readFile(procRoot + "/" + entry.name + "/stat", "utf8"));
+        } catch {
+          return null;
+        }
+      }),
+  );
+  return rows.filter(Boolean);
 }
 
 function collectProcessTree(rootPid, rows) {
@@ -158,6 +187,13 @@ function collectProcessTree(rootPid, rows) {
 
 async function snapshotProcessRows(platform = process.platform, dependencies = {}) {
   if (dependencies.snapshotProcessRows) return dependencies.snapshotProcessRows(platform);
+  if (platform === "linux") {
+    try {
+      return await snapshotLinuxProcRows();
+    } catch {
+      // Fall through to the portable topology snapshot. Without startTick it is not killable.
+    }
+  }
   const commands = nativeProcessCommands(platform);
   const { stdout } = await runNativeCommand(commands.snapshot);
   return parseProcessRows(platform, stdout);
@@ -174,22 +210,34 @@ function normalizeProcessInfo(processInfo) {
       typeof processInfo?.startedAt === "string" && processInfo.startedAt.length > 0
         ? processInfo.startedAt
         : null,
+    startTick:
+      typeof processInfo?.startTick === "string" && processInfo.startTick.length > 0
+        ? processInfo.startTick
+        : null,
   };
 }
 
-function hasVerifiableIdentity(processInfo) {
-  return Number.isInteger(processInfo.pid) && processInfo.pid > 0 && processInfo.startedAt !== null;
+function hasVerifiableIdentity(processInfo, platform) {
+  if (!Number.isInteger(processInfo.pid) || processInfo.pid <= 0) return false;
+  if (platform === "win32") return processInfo.startedAt !== null;
+  return processInfo.startTick !== null;
 }
 
-function identityMatches(expected, actual) {
-  return (
-    Number(expected.pid) === Number(actual?.pid) &&
-    expected.startedAt === (typeof actual?.startedAt === "string" ? actual.startedAt : null)
-  );
+function identityMatches(expected, actual, platform) {
+  const normalizedActual = normalizeProcessInfo(actual);
+  if (Number(expected.pid) !== Number(normalizedActual.pid)) return false;
+  if (platform === "win32") return expected.startedAt === normalizedActual.startedAt;
+  return expected.startTick === normalizedActual.startTick;
 }
 
 function processIdentityKey(processInfo) {
-  return String(processInfo.pid) + ":" + (processInfo.startedAt ?? "");
+  return (
+    String(processInfo.pid) +
+    ":" +
+    (processInfo.startedAt ?? "") +
+    ":" +
+    (processInfo.startTick ?? "")
+  );
 }
 
 function uniqueProcessInfos(processInfos) {
@@ -209,7 +257,7 @@ async function currentMatchingProcess(processInfo, platform, dependencies) {
   const expected = normalizeProcessInfo(processInfo);
   const exists = dependencies.processExists ?? processExists;
   if (!exists(expected.pid)) return null;
-  if (!hasVerifiableIdentity(expected)) {
+  if (!hasVerifiableIdentity(expected, platform)) {
     throw new SmokeFailure(
       "mcp_smoke_cleanup_failed",
       "MCP server process cleanup could not be verified.",
@@ -217,14 +265,22 @@ async function currentMatchingProcess(processInfo, platform, dependencies) {
   }
   const rows = await snapshotProcessRows(platform, dependencies);
   const current = rows.find((row) => row.pid === expected.pid);
-  if (!current) return null;
-  if (!hasVerifiableIdentity(normalizeProcessInfo(current))) {
+  if (!current) {
+    if (exists(expected.pid)) {
+      throw new SmokeFailure(
+        "mcp_smoke_cleanup_failed",
+        "MCP server process cleanup could not be verified.",
+      );
+    }
+    return null;
+  }
+  if (!hasVerifiableIdentity(normalizeProcessInfo(current), platform)) {
     throw new SmokeFailure(
       "mcp_smoke_cleanup_failed",
       "MCP server process cleanup could not be verified.",
     );
   }
-  return identityMatches(expected, current) ? current : null;
+  return identityMatches(expected, current, platform) ? current : null;
 }
 
 async function matchingResidualProcesses(processInfos, platform, dependencies) {

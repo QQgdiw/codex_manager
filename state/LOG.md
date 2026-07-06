@@ -164,3 +164,10 @@
 - Fix: Windows termination is now `taskkill.exe /PID <pid> /F` per verified process, not `/T`; stale/reused PIDs are treated as non-matching and are not terminated.
 - Fix: `timeoutSeconds` must be an integer from 1 through 2147483 seconds; invalid values return `mcp_smoke_invalid_request`.
 - GREEN evidence: `.task4-green-mcp-smoke.log` passed 16/16, `.task4-node-check.log` exit code 0, and `.task4-diff-check.log` exit code 0 with only a CRLF warning from Git.
+## 2026-07-06 Task 4 POSIX start tick hardening
+
+- Review issue: POSIX `lstart` is commonly second-granularity, so matching only `pid + lstart` can still misidentify a same-second reused PID.
+- RED evidence: `.task4-posix-red-mcp-smoke.log` failed 5 expected checks, including same-second different `startTick` being terminated and missing high precision identity not returning `mcp_smoke_cleanup_failed`.
+- Fix: Linux process snapshots now prefer `/proc/<pid>/stat` and use field 22 `starttime` as `startTick`; the portable `ps` fallback only supplies topology and is not considered kill-verifiable on POSIX.
+- Fix: non-Windows cleanup identity requires `startTick`; if the expected or current process lacks it while the PID exists, cleanup throws `mcp_smoke_cleanup_failed` before any terminate call.
+- GREEN evidence: `.task4-posix-green-mcp-smoke.log` passed 18/18, `.task4-posix-node-check.log` exit code 0, and `.task4-posix-diff-check.log` exit code 0 with only a CRLF warning from Git.
