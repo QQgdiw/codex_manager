@@ -718,6 +718,98 @@ Describe 'Get-McpSmokePlan' {
     }
 }
 
+Describe 'Test-ManagedMcpSmoke' {
+    BeforeEach {
+        . $mcpLibrary
+        $script:project = Join-Path $TestDrive 'smoke-project'
+        $script:runnerPath = Join-Path $script:project 'scripts\node\mcp-smoke-runner.mjs'
+        $script:lifecyclePath = Join-Path $script:project 'scripts\smoke\mcp\test.mjs'
+        New-Item -ItemType Directory -Path (Split-Path $script:runnerPath) -Force | Out-Null
+        New-Item -ItemType Directory -Path (Split-Path $script:lifecyclePath) -Force | Out-Null
+        Set-Content -LiteralPath $script:runnerPath -Encoding UTF8 -Value 'process.exit(0);'
+        Set-Content -LiteralPath $script:lifecyclePath -Encoding UTF8 -Value 'process.exit(0);'
+        $sdk = Join-Path $TestDrive 'node_modules\@modelcontextprotocol\sdk\dist\esm\client'
+        New-Item -ItemType Directory -Path $sdk -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $sdk 'index.js') -Encoding UTF8 -Value 'export {};'
+        Set-Content -LiteralPath (Join-Path $sdk 'stdio.js') -Encoding UTF8 -Value 'export {};'
+        New-TestStartupFile
+        $hash = (Get-FileHash $script:lifecyclePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $install = Get-McpInstallPlan -Tool (New-TestMcpTool -SnapshotOverrides @{
+            smoke = [pscustomobject]@{
+                tool_name = 'local_tool'; timeout_seconds = 10
+                expected_content_types = @('text')
+                script_path = 'scripts/smoke/mcp/test.mjs'
+                script_sha256 = $hash
+                arguments = [pscustomobject]@{ value = 1 }
+            }
+        })
+        $script:smokePlan = Get-McpSmokePlan `
+            -InstallPlan $install -ProjectRoot $script:project
+        $script:utf8NoBom = New-Object Text.UTF8Encoding($false)
+    }
+
+    It 'runs prepare runner validate cleanup in order' {
+        $script:steps = New-Object System.Collections.Generic.List[string]
+        $result = Test-ManagedMcpSmoke -Plan $script:smokePlan -Executor {
+            param($Command)
+            $args = @($Command.Arguments)
+            if ($args -contains 'prepare') { $script:steps.Add('prepare'); return New-SuccessProcessResult -StdOut '{"status":"ok"}' }
+            if ($args[0] -eq $script:smokePlan.RunnerPath) {
+                $script:steps.Add('runner')
+                [IO.File]::WriteAllText($args[2], '{"status":"smoke_verified","errorCode":null,"contentTypes":["text"],"isError":false,"residualProcess":false}', $script:utf8NoBom)
+                return New-SuccessProcessResult -StdOut '{"status":"smoke_verified"}'
+            }
+            if ($args -contains 'validate') { $script:steps.Add('validate'); return New-SuccessProcessResult -StdOut '{"status":"ok"}' }
+            if ($args -contains 'cleanup') { $script:steps.Add('cleanup'); return New-SuccessProcessResult -StdOut '{"status":"ok"}' }
+            throw 'unexpected command'
+        }
+
+        $result.Status | Should Be 'smoke_verified'
+        @($script:steps) | Should Be @('prepare', 'runner', 'validate', 'cleanup')
+    }
+
+    It 'runs cleanup after runner failure' {
+        $script:cleanupCalled = $false
+        $result = Test-ManagedMcpSmoke -Plan $script:smokePlan -Executor {
+            param($Command)
+            $args = @($Command.Arguments)
+            if ($args -contains 'prepare') { return New-SuccessProcessResult -StdOut '{"status":"ok"}' }
+            if ($args[0] -eq $script:smokePlan.RunnerPath) {
+                [IO.File]::WriteAllText($args[2], '{"status":"failed","errorCode":"mcp_smoke_timeout","isError":true,"residualProcess":false}', $script:utf8NoBom)
+                return New-FailedProcessResult -StdErr 'runner failed' -TimedOut $true
+            }
+            if ($args -contains 'cleanup') {
+                $script:cleanupCalled = $true
+                return New-SuccessProcessResult -StdOut '{"status":"ok"}'
+            }
+            throw 'unexpected command'
+        }
+
+        $script:cleanupCalled | Should Be $true
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'mcp_smoke_timeout'
+    }
+
+    It 'fails when cleanup fails after a successful call' {
+        $result = Test-ManagedMcpSmoke -Plan $script:smokePlan -Executor {
+            param($Command)
+            $args = @($Command.Arguments)
+            if ($args -contains 'prepare') { return New-SuccessProcessResult -StdOut '{"status":"ok"}' }
+            if ($args[0] -eq $script:smokePlan.RunnerPath) {
+                [IO.File]::WriteAllText($args[2], '{"status":"smoke_verified","errorCode":null,"contentTypes":["text"],"isError":false,"residualProcess":false}', $script:utf8NoBom)
+                return New-SuccessProcessResult -StdOut '{"status":"smoke_verified"}'
+            }
+            if ($args -contains 'validate') { return New-SuccessProcessResult -StdOut '{"status":"ok"}' }
+            if ($args -contains 'cleanup') { return New-FailedProcessResult -StdErr 'cleanup failed' }
+            throw 'unexpected command'
+        }
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'mcp_smoke_cleanup_failed'
+        @($result.Residuals).Count | Should BeGreaterThan 0
+    }
+}
+
 Describe 'Test-ManagedMcp' {
     BeforeAll {
         . $mcpLibrary

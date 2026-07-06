@@ -1250,6 +1250,115 @@ function Test-McpAdapterStringArrayEqual {
     return $true
 }
 
+function New-McpSmokeLifecycleCommand {
+    param([object]$Plan, [string]$Action, [string]$OperationRoot, [string]$ResultPath)
+    $readRoots = "$($Plan.ScriptPath),$OperationRoot"
+    $arguments = @(
+        '--permission',
+        "--allow-fs-read=$readRoots",
+        "--allow-fs-write=$OperationRoot",
+        $Plan.ScriptPath,
+        '--action', $Action,
+        '--temp-root', $OperationRoot,
+        '--result-path', $ResultPath
+    )
+    return [pscustomobject][ordered]@{
+        FilePath = 'node'
+        Arguments = $arguments
+        TimeoutSeconds = $Plan.TimeoutSeconds
+        WorkingDirectory = $OperationRoot
+        ClearEnvironment = $true
+        Environment = @{ SMOKE_ACTION = $Action; SMOKE_TEMP_ROOT = $OperationRoot }
+    }
+}
+
+function New-McpSmokeResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Status,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+
+        [AllowNull()]
+        [object[]]$Checks = @(),
+
+        [AllowNull()]
+        [object[]]$Residuals = @(),
+
+        [AllowNull()]
+        [object]$ErrorCode = $null
+    )
+
+    return [pscustomobject][ordered]@{
+        Status = $Status
+        Message = $Message
+        Checks = @($Checks)
+        Residuals = @($Residuals)
+        ErrorCode = $ErrorCode
+    }
+}
+
+function New-McpSmokeError {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ErrorCode,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    return [pscustomobject][ordered]@{
+        ErrorCode = $ErrorCode
+        Message = $Message
+    }
+}
+
+function Invoke-McpSmokeLifecycleStep {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Plan,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Action,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OperationRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ResultPath,
+
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Executor
+    )
+
+    $actualSha256 = (Get-FileHash -LiteralPath $Plan.ScriptPath -Algorithm SHA256).
+        Hash.ToLowerInvariant()
+    if ($actualSha256 -ne $Plan.ScriptSha256.ToLowerInvariant()) {
+        return [pscustomobject][ordered]@{
+            Succeeded = $false
+            Error = New-McpSmokeError -ErrorCode 'mcp_smoke_script_hash_mismatch' -Message 'MCP smoke script SHA256 changed before lifecycle execution.'
+            Result = $null
+        }
+    }
+
+    $command = New-McpSmokeLifecycleCommand -Plan $Plan -Action $Action -OperationRoot $OperationRoot -ResultPath $ResultPath
+    $result = Invoke-McpAdapterExecutor -Command $command -Executor $Executor -SensitiveValues $Plan.InstallPlan.SensitiveRedactions
+    if (-not (Test-McpProcessSucceeded -Result $result)) {
+        return [pscustomobject][ordered]@{
+            Succeeded = $false
+            Error = New-McpSmokeError -ErrorCode ('mcp_smoke_{0}_failed' -f $Action) -Message ("MCP smoke lifecycle action '$Action' failed.")
+            Result = $result
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        Succeeded = $true
+        Error = $null
+        Result = $result
+    }
+}
+
 function Test-McpGetOutputMatchesPlan {
     param(
         [AllowNull()]
@@ -1292,6 +1401,187 @@ function Test-ManagedMcpSmokeProfile {
         Message = 'MCP smoke profile paths and hashes were verified.'
         Checks = @('mcp_smoke_profile_valid', 'mcp_smoke_script_hash_verified')
     }
+}
+
+function Test-ManagedMcpSmoke {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Plan,
+
+        [AllowNull()]
+        [scriptblock]$Executor
+    )
+
+    if ($Plan.Status -ne 'planned') {
+        return New-McpSmokeResult -Status 'failed' -Message $Plan.Message -ErrorCode $Plan.ErrorCode
+    }
+    if ($null -eq $Executor) {
+        return New-McpSmokeResult -Status 'blocked' -Message 'Executor is required; MCP smoke verification was not run.' -ErrorCode 'missing_executor'
+    }
+
+    $checks = New-Object System.Collections.Generic.List[object]
+    $residuals = New-Object System.Collections.Generic.List[object]
+    $primaryError = $null
+    $cleanupFailed = $false
+    $residualProcess = $false
+    $operationRoot = $null
+    $runnerOutput = $null
+    $utf8NoBom = New-Object Text.UTF8Encoding($false)
+
+    try {
+        New-Item -ItemType Directory -Path $Plan.TempRootParent -Force | Out-Null
+        $operationRoot = Join-Path $Plan.TempRootParent ([Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $operationRoot -Force | Out-Null
+
+        $preparePath = Join-Path $operationRoot 'prepare-result.json'
+        $prepare = Invoke-McpSmokeLifecycleStep -Plan $Plan -Action 'prepare' -OperationRoot $operationRoot -ResultPath $preparePath -Executor $Executor
+        [void]$checks.Add('mcp_smoke_prepare')
+        if (-not $prepare.Succeeded) {
+            $primaryError = $prepare.Error
+        }
+
+        $requestPath = Join-Path $operationRoot 'request.json'
+        $resultPath = Join-Path $operationRoot 'result.json'
+        if ($null -eq $primaryError) {
+            $request = [ordered]@{
+                sdkClientPath = [string]$Plan.SdkClientPath
+                sdkStdioPath = [string]$Plan.SdkStdioPath
+                command = [string]$Plan.ServerFilePath
+                args = @($Plan.InstallPlan.ResolvedArguments | ForEach-Object { [string]$_ })
+                toolName = [string]$Plan.ToolName
+                arguments = $Plan.Arguments
+                timeoutSeconds = [int]$Plan.TimeoutSeconds
+            }
+            $workingDirectory = Get-McpAdapterString -InputObject $Plan.InstallPlan -Names @('WorkingDirectory', 'working_directory')
+            if (-not [string]::IsNullOrWhiteSpace($workingDirectory)) {
+                $request.cwd = $workingDirectory
+            }
+            [IO.File]::WriteAllText($requestPath, ($request | ConvertTo-Json -Depth 12 -Compress), $utf8NoBom)
+            [void]$checks.Add('mcp_smoke_request_written')
+
+            $runnerCommand = [pscustomobject][ordered]@{
+                FilePath = 'node'
+                Arguments = @($Plan.RunnerPath, $requestPath, $resultPath)
+                TimeoutSeconds = [int]$Plan.TimeoutSeconds
+                WorkingDirectory = $operationRoot
+                ClearEnvironment = $true
+                Environment = @{}
+            }
+            $runnerResult = Invoke-McpAdapterExecutor -Command $runnerCommand -Executor $Executor -SensitiveValues $Plan.InstallPlan.SensitiveRedactions
+            [void]$checks.Add('mcp_smoke_runner')
+
+            if (Test-Path -LiteralPath $resultPath -PathType Leaf) {
+                try {
+                    $runnerOutput = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json -ErrorAction Stop
+                }
+                catch {
+                    $primaryError = New-McpSmokeError -ErrorCode 'mcp_smoke_result_parse_failed' -Message 'MCP smoke runner result JSON could not be parsed.'
+                }
+            }
+            elseif (-not (Test-McpProcessSucceeded -Result $runnerResult)) {
+                $runnerCode = if ((Get-McpAdapterMember -InputObject $runnerResult -Names @('TimedOut'))) {
+                    'mcp_smoke_timeout'
+                }
+                else {
+                    'mcp_smoke_runner_failed'
+                }
+                $primaryError = New-McpSmokeError -ErrorCode $runnerCode -Message 'MCP smoke runner failed before writing a result.'
+            }
+            else {
+                $primaryError = New-McpSmokeError -ErrorCode 'mcp_smoke_result_missing' -Message 'MCP smoke runner did not write a result.'
+            }
+
+            if ($null -ne $runnerOutput) {
+                $residualValue = Get-McpAdapterMember -InputObject $runnerOutput -Names @('residualProcess', 'ResidualProcess')
+                $residualProcess = ($null -ne $residualValue -and [bool]$residualValue)
+                $statusValue = Get-McpAdapterString -InputObject $runnerOutput -Names @('status', 'Status')
+                $isErrorValue = Get-McpAdapterMember -InputObject $runnerOutput -Names @('isError', 'IsError')
+                if ($statusValue -ne 'smoke_verified' -or ($null -ne $isErrorValue -and [bool]$isErrorValue)) {
+                    $runnerErrorCode = Get-McpAdapterString -InputObject $runnerOutput -Names @('errorCode', 'ErrorCode')
+                    if ([string]::IsNullOrWhiteSpace($runnerErrorCode)) {
+                        $runnerErrorCode = 'mcp_smoke_failed'
+                    }
+                    $primaryError = New-McpSmokeError -ErrorCode $runnerErrorCode -Message 'MCP smoke runner reported a failed smoke result.'
+                }
+                else {
+                    $contentTypes = @(Get-McpAdapterArray -Value (Get-McpAdapterMember -InputObject $runnerOutput -Names @('contentTypes', 'ContentTypes')) | ForEach-Object { [string]$_ })
+                    foreach ($expectedType in @($Plan.ExpectedContentTypes)) {
+                        if ($contentTypes -notcontains [string]$expectedType) {
+                            $primaryError = New-McpSmokeError -ErrorCode 'mcp_smoke_content_type_missing' -Message 'MCP smoke runner did not return an expected content type.'
+                            break
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($null -eq $primaryError) {
+            $validatePath = Join-Path $operationRoot 'validate-result.json'
+            $validate = Invoke-McpSmokeLifecycleStep -Plan $Plan -Action 'validate' -OperationRoot $operationRoot -ResultPath $validatePath -Executor $Executor
+            [void]$checks.Add('mcp_smoke_validate')
+            if (-not $validate.Succeeded) {
+                $primaryError = $validate.Error
+            }
+        }
+    }
+    finally {
+        if (-not [string]::IsNullOrWhiteSpace($operationRoot)) {
+            $cleanupPath = Join-Path $operationRoot 'cleanup-result.json'
+            $cleanup = Invoke-McpSmokeLifecycleStep -Plan $Plan -Action 'cleanup' -OperationRoot $operationRoot -ResultPath $cleanupPath -Executor $Executor
+            [void]$checks.Add('mcp_smoke_cleanup')
+            if (-not $cleanup.Succeeded) {
+                $cleanupFailed = $true
+                if ($null -eq $primaryError -and
+                    $cleanup.Error.ErrorCode -eq 'mcp_smoke_script_hash_mismatch') {
+                    $primaryError = $cleanup.Error
+                }
+                [void]$residuals.Add((New-McpProcessSummary -Step 'mcp_smoke_cleanup' -Result $cleanup.Result -SensitiveValues $Plan.InstallPlan.SensitiveRedactions))
+            }
+
+            try {
+                Remove-Item -LiteralPath $operationRoot -Recurse -Force -ErrorAction Stop
+            }
+            catch {
+                $cleanupFailed = $true
+                [void]$residuals.Add([pscustomobject][ordered]@{
+                        Step = 'mcp_smoke_operation_root_delete'
+                        Succeeded = $false
+                        Message = 'MCP smoke operation root could not be removed.'
+                    })
+            }
+
+            if ($residualProcess) {
+                [void]$residuals.Add([pscustomobject][ordered]@{
+                        Step = 'mcp_smoke_residual_process'
+                        Succeeded = $false
+                        Message = 'MCP smoke runner reported a residual process.'
+                    })
+            }
+        }
+    }
+
+    $status = 'failed'
+    $message = 'MCP smoke verification failed.'
+    $errorCode = $null
+    if ($null -ne $primaryError) {
+        $errorCode = $primaryError.ErrorCode
+        $message = $primaryError.Message
+    }
+    elseif ($cleanupFailed) {
+        $errorCode = 'mcp_smoke_cleanup_failed'
+        $message = 'MCP smoke cleanup failed.'
+    }
+    elseif ($residualProcess) {
+        $errorCode = 'mcp_smoke_residual_process'
+        $message = 'MCP smoke runner reported a residual process.'
+    }
+    else {
+        $status = 'smoke_verified'
+        $message = 'MCP smoke verification completed successfully.'
+    }
+
+    return New-McpSmokeResult -Status $status -Message $message -Checks @($checks.ToArray()) -Residuals @($residuals.ToArray()) -ErrorCode $errorCode
 }
 
 function Test-ManagedMcp {
