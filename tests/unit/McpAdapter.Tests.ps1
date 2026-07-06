@@ -808,6 +808,65 @@ Describe 'Test-ManagedMcpSmoke' {
         $result.ErrorCode | Should Be 'mcp_smoke_cleanup_failed'
         @($result.Residuals).Count | Should BeGreaterThan 0
     }
+
+    It 'removes operation root when lifecycle script disappears before cleanup' {
+        $script:operationRoot = $null
+        $result = $null
+        $thrown = $null
+
+        try {
+            $result = Test-ManagedMcpSmoke -Plan $script:smokePlan -Executor {
+                param($Command)
+                $args = @($Command.Arguments)
+                if ($args -contains 'prepare') {
+                    $script:operationRoot = $Command.WorkingDirectory
+                    Remove-Item -LiteralPath $script:lifecyclePath -Force
+                    return New-SuccessProcessResult -StdOut '{"status":"ok"}'
+                }
+                if ($args[0] -eq $script:smokePlan.RunnerPath) {
+                    [IO.File]::WriteAllText($args[2], '{"status":"smoke_verified","errorCode":null,"contentTypes":["text"],"isError":false,"residualProcess":false}', $script:utf8NoBom)
+                    return New-SuccessProcessResult -StdOut '{"status":"smoke_verified"}'
+                }
+                throw 'lifecycle script should not execute after deletion'
+            }
+        }
+        catch {
+            $thrown = $_
+        }
+
+        $thrown | Should Be $null
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'mcp_smoke_script_hash_mismatch'
+        (Test-Path -LiteralPath $script:operationRoot) | Should Be $false
+    }
+
+    It 'does not leak cleanup stdout stderr or MCP body in residuals' {
+        $result = Test-ManagedMcpSmoke -Plan $script:smokePlan -Executor {
+            param($Command)
+            $args = @($Command.Arguments)
+            if ($args -contains 'prepare') { return New-SuccessProcessResult -StdOut '{"status":"ok"}' }
+            if ($args[0] -eq $script:smokePlan.RunnerPath) {
+                [IO.File]::WriteAllText($args[2], '{"status":"smoke_verified","errorCode":null,"contentTypes":["text"],"isError":false,"residualProcess":false}', $script:utf8NoBom)
+                return New-SuccessProcessResult -StdOut '{"status":"smoke_verified"}'
+            }
+            if ($args -contains 'validate') { return New-SuccessProcessResult -StdOut '{"status":"ok"}' }
+            if ($args -contains 'cleanup') {
+                return [pscustomobject]@{
+                    Succeeded = $false
+                    ExitCode = 1
+                    TimedOut = $false
+                    StdOut = '{"arguments":{"prompt":"secret prompt"},"mcpBody":"secret body"}'
+                    StdErr = '{"prompt":"secret prompt","mcpBody":"secret body"}'
+                }
+            }
+            throw 'unexpected command'
+        }
+
+        $result.Status | Should Be 'failed'
+        $result.ErrorCode | Should Be 'mcp_smoke_cleanup_failed'
+        ($result | ConvertTo-Json -Depth 12 -Compress) |
+            Should Not Match 'arguments|prompt|mcpBody|secret prompt|secret body'
+    }
 }
 
 Describe 'Test-ManagedMcp' {

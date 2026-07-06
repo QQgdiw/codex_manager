@@ -1314,6 +1314,42 @@ function New-McpSmokeError {
     }
 }
 
+function New-McpSmokeResidualSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Step,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Action,
+
+        [AllowNull()]
+        [object]$Result,
+
+        [AllowNull()]
+        [object]$ErrorCode = $null,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    $exitCode = Get-McpAdapterMember -InputObject $Result -Names @('ExitCode')
+    $timedOut = Get-McpAdapterMember -InputObject $Result -Names @('TimedOut')
+    $stdout = Get-McpAdapterMember -InputObject $Result -Names @('StdOut', 'stdout')
+    $stderr = Get-McpAdapterMember -InputObject $Result -Names @('StdErr', 'stderr')
+
+    return [pscustomobject][ordered]@{
+        Step = $Step
+        Action = $Action
+        Succeeded = $false
+        ExitCode = $exitCode
+        TimedOut = if ($null -eq $timedOut) { $false } else { [bool]$timedOut }
+        ErrorCode = $ErrorCode
+        Message = $Message
+        StdOutTruncated = -not [string]::IsNullOrEmpty("$stdout")
+        StdErrTruncated = -not [string]::IsNullOrEmpty("$stderr")
+    }
+}
+
 function Invoke-McpSmokeLifecycleStep {
     param(
         [Parameter(Mandatory = $true)]
@@ -1332,8 +1368,17 @@ function Invoke-McpSmokeLifecycleStep {
         [scriptblock]$Executor
     )
 
-    $actualSha256 = (Get-FileHash -LiteralPath $Plan.ScriptPath -Algorithm SHA256).
-        Hash.ToLowerInvariant()
+    try {
+        $actualSha256 = (Get-FileHash -LiteralPath $Plan.ScriptPath -Algorithm SHA256 -ErrorAction Stop).
+            Hash.ToLowerInvariant()
+    }
+    catch {
+        return [pscustomobject][ordered]@{
+            Succeeded = $false
+            Error = New-McpSmokeError -ErrorCode 'mcp_smoke_script_hash_mismatch' -Message 'MCP smoke script SHA256 could not be verified before lifecycle execution.'
+            Result = $null
+        }
+    }
     if ($actualSha256 -ne $Plan.ScriptSha256.ToLowerInvariant()) {
         return [pscustomobject][ordered]@{
             Succeeded = $false
@@ -1528,15 +1573,31 @@ function Test-ManagedMcpSmoke {
     finally {
         if (-not [string]::IsNullOrWhiteSpace($operationRoot)) {
             $cleanupPath = Join-Path $operationRoot 'cleanup-result.json'
-            $cleanup = Invoke-McpSmokeLifecycleStep -Plan $Plan -Action 'cleanup' -OperationRoot $operationRoot -ResultPath $cleanupPath -Executor $Executor
+            $cleanup = $null
             [void]$checks.Add('mcp_smoke_cleanup')
+            try {
+                $cleanup = Invoke-McpSmokeLifecycleStep -Plan $Plan -Action 'cleanup' -OperationRoot $operationRoot -ResultPath $cleanupPath -Executor $Executor
+            }
+            catch {
+                $cleanup = [pscustomobject][ordered]@{
+                    Succeeded = $false
+                    Error = New-McpSmokeError -ErrorCode 'mcp_smoke_cleanup_failed' -Message 'MCP smoke cleanup raised an unexpected exception.'
+                    Result = [pscustomobject][ordered]@{
+                        Succeeded = $false
+                        ExitCode = $null
+                        TimedOut = $false
+                        StdOut = ''
+                        StdErr = 'cleanup failed'
+                    }
+                }
+            }
             if (-not $cleanup.Succeeded) {
                 $cleanupFailed = $true
                 if ($null -eq $primaryError -and
                     $cleanup.Error.ErrorCode -eq 'mcp_smoke_script_hash_mismatch') {
                     $primaryError = $cleanup.Error
                 }
-                [void]$residuals.Add((New-McpProcessSummary -Step 'mcp_smoke_cleanup' -Result $cleanup.Result -SensitiveValues $Plan.InstallPlan.SensitiveRedactions))
+                [void]$residuals.Add((New-McpSmokeResidualSummary -Step 'mcp_smoke_cleanup' -Action 'cleanup' -Result $cleanup.Result -ErrorCode $cleanup.Error.ErrorCode -Message 'MCP smoke cleanup failed; output was not retained.'))
             }
 
             try {
