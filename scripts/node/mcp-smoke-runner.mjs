@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 const execFileAsync = promisify(execFile);
 const CLEANUP_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 25;
+const MAX_TIMEOUT_SECONDS = Math.floor(2_147_483_647 / 1000);
 
 class SmokeFailure extends Error {
   constructor(code, message) {
@@ -57,8 +58,9 @@ function validateRequest(request) {
     request.arguments !== null &&
     typeof request.arguments === "object" &&
     !Array.isArray(request.arguments) &&
-    Number.isFinite(request.timeoutSeconds) &&
-    request.timeoutSeconds > 0;
+    Number.isInteger(request.timeoutSeconds) &&
+    request.timeoutSeconds > 0 &&
+    request.timeoutSeconds <= MAX_TIMEOUT_SECONDS;
   if (!valid) {
     throw new SmokeFailure("mcp_smoke_invalid_request", "Invalid MCP smoke request.");
   }
@@ -78,7 +80,7 @@ const WINDOWS_PROCESS_SNAPSHOT = [
   "-NoProfile",
   "-NonInteractive",
   "-Command",
-  "$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
+  "$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,@{Name='CreationDate';Expression={$_.CreationDate.ToUniversalTime().ToString('o')}} | ConvertTo-Json -Compress",
 ];
 
 export function nativeProcessCommands(platform, pid) {
@@ -87,12 +89,12 @@ export function nativeProcessCommands(platform, pid) {
       snapshot: { command: "powershell.exe", args: WINDOWS_PROCESS_SNAPSHOT },
       terminate: {
         command: "taskkill.exe",
-        args: ["/PID", String(pid), "/T", "/F"],
+        args: ["/PID", String(pid), "/F"],
       },
     };
   }
   return {
-    snapshot: { command: "ps", args: ["-eo", "pid=,ppid="] },
+    snapshot: { command: "ps", args: ["-eo", "pid=,ppid=,lstart="] },
     terminate: null,
   };
 }
@@ -119,39 +121,134 @@ function parseProcessRows(platform, stdout) {
     return (Array.isArray(parsed) ? parsed : [parsed]).map((row) => ({
       pid: Number(row.ProcessId),
       parentPid: Number(row.ParentProcessId),
+      startedAt: String(row.CreationDate ?? ""),
     }));
   }
   return stdout
     .split(/\r?\n/u)
-    .map((line) => line.trim().match(/^(\d+)\s+(\d+)$/u))
+    .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/u))
     .filter(Boolean)
-    .map((match) => ({ pid: Number(match[1]), parentPid: Number(match[2]) }));
+    .map((match) => ({
+      pid: Number(match[1]),
+      parentPid: Number(match[2]),
+      startedAt: match[3].trim(),
+    }));
 }
 
 function collectProcessTree(rootPid, rows) {
+  const rowsByPid = new Map(rows.map((row) => [row.pid, row]));
+  const root = rowsByPid.get(rootPid);
+  if (!root) return [];
   const childrenByParent = new Map();
   for (const row of rows) {
     const children = childrenByParent.get(row.parentPid) ?? [];
-    children.push(row.pid);
+    children.push(row);
     childrenByParent.set(row.parentPid, children);
   }
   const tree = [];
-  const pending = [rootPid];
+  const pending = [root];
   while (pending.length > 0) {
-    const pid = pending.shift();
-    if (tree.includes(pid)) continue;
-    tree.push(pid);
-    pending.push(...(childrenByParent.get(pid) ?? []));
+    const processInfo = pending.shift();
+    if (tree.some((entry) => entry.pid === processInfo.pid)) continue;
+    tree.push(processInfo);
+    pending.push(...(childrenByParent.get(processInfo.pid) ?? []));
   }
   return tree;
 }
 
-async function snapshotProcessTree(rootPid, platform = process.platform) {
-  const commands = nativeProcessCommands(platform, rootPid);
-  let stdout;
+async function snapshotProcessRows(platform = process.platform, dependencies = {}) {
+  if (dependencies.snapshotProcessRows) return dependencies.snapshotProcessRows(platform);
+  const commands = nativeProcessCommands(platform);
+  const { stdout } = await runNativeCommand(commands.snapshot);
+  return parseProcessRows(platform, stdout);
+}
+
+function normalizeProcessInfo(processInfo) {
+  if (typeof processInfo === "number") {
+    return { pid: processInfo, parentPid: null, startedAt: null };
+  }
+  return {
+    pid: Number(processInfo?.pid),
+    parentPid: Number(processInfo?.parentPid),
+    startedAt:
+      typeof processInfo?.startedAt === "string" && processInfo.startedAt.length > 0
+        ? processInfo.startedAt
+        : null,
+  };
+}
+
+function hasVerifiableIdentity(processInfo) {
+  return Number.isInteger(processInfo.pid) && processInfo.pid > 0 && processInfo.startedAt !== null;
+}
+
+function identityMatches(expected, actual) {
+  return (
+    Number(expected.pid) === Number(actual?.pid) &&
+    expected.startedAt === (typeof actual?.startedAt === "string" ? actual.startedAt : null)
+  );
+}
+
+function processIdentityKey(processInfo) {
+  return String(processInfo.pid) + ":" + (processInfo.startedAt ?? "");
+}
+
+function uniqueProcessInfos(processInfos) {
+  const byIdentity = new Map();
+  for (const processInfo of processInfos.map(normalizeProcessInfo)) {
+    if (!Number.isInteger(processInfo.pid) || processInfo.pid <= 0) continue;
+    byIdentity.set(processIdentityKey(processInfo), processInfo);
+  }
+  return [...byIdentity.values()];
+}
+
+function mergeProcessTrees(...trees) {
+  return uniqueProcessInfos(trees.flat());
+}
+
+async function currentMatchingProcess(processInfo, platform, dependencies) {
+  const expected = normalizeProcessInfo(processInfo);
+  const exists = dependencies.processExists ?? processExists;
+  if (!exists(expected.pid)) return null;
+  if (!hasVerifiableIdentity(expected)) {
+    throw new SmokeFailure(
+      "mcp_smoke_cleanup_failed",
+      "MCP server process cleanup could not be verified.",
+    );
+  }
+  const rows = await snapshotProcessRows(platform, dependencies);
+  const current = rows.find((row) => row.pid === expected.pid);
+  if (!current) return null;
+  if (!hasVerifiableIdentity(normalizeProcessInfo(current))) {
+    throw new SmokeFailure(
+      "mcp_smoke_cleanup_failed",
+      "MCP server process cleanup could not be verified.",
+    );
+  }
+  return identityMatches(expected, current) ? current : null;
+}
+
+async function matchingResidualProcesses(processInfos, platform, dependencies) {
+  const residual = [];
+  for (const processInfo of processInfos) {
+    const current = await currentMatchingProcess(processInfo, platform, dependencies);
+    if (current) residual.push(normalizeProcessInfo(processInfo));
+  }
+  return residual;
+}
+
+async function waitForProcessIdentitiesToExit(processInfos, timeoutMs, platform, dependencies) {
+  const deadline = Date.now() + timeoutMs;
+  let residual = await matchingResidualProcesses(processInfos, platform, dependencies);
+  while (residual.length > 0 && Date.now() < deadline) {
+    await delay(Math.min(POLL_INTERVAL_MS, Math.max(1, deadline - Date.now())));
+    residual = await matchingResidualProcesses(processInfos, platform, dependencies);
+  }
+  return residual;
+}
+
+async function snapshotProcessTree(rootPid, platform = process.platform, dependencies = {}) {
   try {
-    ({ stdout } = await runNativeCommand(commands.snapshot));
-    return collectProcessTree(rootPid, parseProcessRows(platform, stdout));
+    return collectProcessTree(rootPid, await snapshotProcessRows(platform, dependencies));
   } catch (error) {
     if (error instanceof SmokeFailure) throw error;
     throw new SmokeFailure(
@@ -161,14 +258,19 @@ async function snapshotProcessTree(rootPid, platform = process.platform) {
   }
 }
 
-async function terminateProcess(pid, platform = process.platform) {
-  if (!processExists(pid)) return;
+async function terminateProcess(pid, platform = process.platform, dependencies = {}) {
+  const exists = dependencies.processExists ?? processExists;
+  if (!exists(pid)) return;
+  if (dependencies.terminatePid) {
+    await dependencies.terminatePid(pid, platform);
+    return;
+  }
   if (platform === "win32") {
     const command = nativeProcessCommands(platform, pid).terminate;
     try {
       await runNativeCommand(command);
     } catch (error) {
-      if (processExists(pid)) throw error;
+      if (exists(pid)) throw error;
     }
     return;
   }
@@ -184,25 +286,49 @@ async function terminateProcess(pid, platform = process.platform) {
   }
 }
 
-async function cleanupProcessTree(pids, platform = process.platform) {
-  const uniquePids = [...new Set(pids)].filter(Boolean);
-  const leafFirst = [...uniquePids].reverse();
-  for (const pid of leafFirst) await terminateProcess(pid, platform);
-  let residual = await waitForProcessesToExit(uniquePids, CLEANUP_TIMEOUT_MS);
+async function forceTerminateProcess(pid, platform = process.platform, dependencies = {}) {
+  if (dependencies.forceTerminatePid) {
+    await dependencies.forceTerminatePid(pid, platform);
+    return;
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    if (error.code !== "ESRCH") {
+      throw new SmokeFailure(
+        "mcp_smoke_cleanup_failed",
+        "MCP server process cleanup could not be verified.",
+      );
+    }
+  }
+}
+
+export async function cleanupProcessTree(processInfos, platform = process.platform, dependencies = {}) {
+  const uniqueProcesses = uniqueProcessInfos(processInfos);
+  const leafFirst = [...uniqueProcesses].reverse();
+  for (const processInfo of leafFirst) {
+    if (await currentMatchingProcess(processInfo, platform, dependencies)) {
+      await terminateProcess(processInfo.pid, platform, dependencies);
+    }
+  }
+  let residual = await waitForProcessIdentitiesToExit(
+    uniqueProcesses,
+    CLEANUP_TIMEOUT_MS,
+    platform,
+    dependencies,
+  );
   if (platform !== "win32" && residual.length > 0) {
-    for (const pid of [...residual].reverse()) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch (error) {
-        if (error.code !== "ESRCH") {
-          throw new SmokeFailure(
-            "mcp_smoke_cleanup_failed",
-            "MCP server process cleanup could not be verified.",
-          );
-        }
+    for (const processInfo of [...residual].reverse()) {
+      if (await currentMatchingProcess(processInfo, platform, dependencies)) {
+        await forceTerminateProcess(processInfo.pid, platform, dependencies);
       }
     }
-    residual = await waitForProcessesToExit(residual, CLEANUP_TIMEOUT_MS);
+    residual = await waitForProcessIdentitiesToExit(
+      residual,
+      CLEANUP_TIMEOUT_MS,
+      platform,
+      dependencies,
+    );
   }
   return residual;
 }
@@ -288,7 +414,7 @@ async function runSmoke(requestPath, resultPath) {
     };
     if (serverPid && processExists(serverPid)) {
       try {
-        processTree = [...new Set([...processTree, ...(await snapshotProcessTree(serverPid))])];
+        processTree = mergeProcessTrees(processTree, await snapshotProcessTree(serverPid));
       } catch (error) {
         recordCleanupError(error);
       }
@@ -303,7 +429,9 @@ async function runSmoke(requestPath, resultPath) {
       residual = await cleanupProcessTree(processTree);
     } catch (error) {
       recordCleanupError(error);
-      residual = processTree.filter(processExists);
+      residual = processTree
+        .map(normalizeProcessInfo)
+        .filter((processInfo) => processExists(processInfo.pid));
     }
     output.residualProcess = residual.length > 0 || Boolean(cleanupError);
     if (cleanupError) {

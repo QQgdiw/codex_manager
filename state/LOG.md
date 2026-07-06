@@ -156,3 +156,11 @@
 - Task 3 已允许适配器注入 `StaticVerifier`；异常路径必须传入敏感值脱敏列表，存在但类型错误的 `StaticVerifier` 必须失败，不能按未配置静默跳过。
 - Task 4 已实现通用 Node MCP stdio smoke runner。runner 必须忽略服务端 stderr 以避免背压和敏感诊断泄漏，必须对输入结构和超时做显式校验，必须在成功、失败、超时路径执行有界进程树清理并检查残留。
 - Task 4 的最终质量复核因子代理额度限制改由主会话人工完成；验证证据为 `node --check scripts/node/mcp-smoke-runner.mjs` 通过、目标集成测试 14/14 通过、全量 integration 43/43 通过、`git diff --check` 无输出。
+## 2026-07-06 Task 4 cleanup identity hardening
+
+- Review issue: `scripts/node/mcp-smoke-runner.mjs` kept bare PID lists and terminated them later, which could kill reused PIDs. Windows `taskkill /T /F` could also expand into an unrelated current process tree.
+- RED evidence: `.task4-red-mcp-smoke.log` showed 4 expected failures: Windows terminate args still included `/T`, cleanup identity probe APIs were missing, and fractional/oversized timeout requests were accepted.
+- Fix: process snapshots now include `startedAt` identity data from Windows CIM `CreationDate` or POSIX `ps ... lstart`; cleanup re-snapshots and matches identity immediately before each terminate/force-terminate action.
+- Fix: Windows termination is now `taskkill.exe /PID <pid> /F` per verified process, not `/T`; stale/reused PIDs are treated as non-matching and are not terminated.
+- Fix: `timeoutSeconds` must be an integer from 1 through 2147483 seconds; invalid values return `mcp_smoke_invalid_request`.
+- GREEN evidence: `.task4-green-mcp-smoke.log` passed 16/16, `.task4-node-check.log` exit code 0, and `.task4-diff-check.log` exit code 0 with only a CRLF warning from Git.

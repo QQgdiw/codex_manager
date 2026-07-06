@@ -65,3 +65,7 @@
 - 2026-06-26 Skill 真实部署与 load verification 最小闭环：入口已对 skill 类型接入 `Install-ManagedSkill` 和 `Test-ManagedSkill` load verifier；MCP 仍 blocked；Skill smoke verifier 尚未实现，不能宣称 Codex 运行时已实际加载并执行 Skill。
 - 2026-06-27 MCP 真实部署与 load verification 最小闭环：入口已对 mcp 类型接入 `Install-ManagedMcp` 和 `Test-ManagedMcp` load verifier；plugin、skill、mcp 均已有真实部署和 load verification 最小闭环；MCP smoke verifier 尚未实现，不能宣称 MCP 工具方法已被安全调用。
 - 2026-06-29 sequential-thinking MCP 已部署到用户级 Codex 配置；静态验证和 load verification 通过，并通过一次独立 MCP 客户端完成 `initialize`、`tools/list` 和最小 `sequentialthinking` 调用。该协议 smoke 仍是手工试运行证据，尚未接入管理器自动 smoke verifier。
+## 2026-07-06 Task 4 Quality Follow-up
+
+- MCP smoke runner cleanup now carries PID identity metadata and revalidates it before termination.
+- Windows cleanup intentionally avoids `taskkill /T`; timeout seconds are capped to positive integers within Node timer limits.

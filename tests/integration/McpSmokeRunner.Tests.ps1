@@ -263,9 +263,73 @@ await writeFile(process.argv[3], JSON.stringify(result));
         $LASTEXITCODE | Should Be 0
         $commands = Get-Content $probeResultPath -Raw | ConvertFrom-Json
         $commands.win32.terminate.command | Should Be 'taskkill.exe'
-        ($commands.win32.terminate.args -join ' ') | Should Be '/PID 123 /T /F'
+        ($commands.win32.terminate.args -join ' ') | Should Be '/PID 123 /F'
+        ($commands.win32.snapshot.args -join ' ') | Should Match 'CreationDate'
         $commands.posix.snapshot.command | Should Be 'ps'
-        ($commands.posix.snapshot.args -join ' ') | Should Be '-eo pid=,ppid='
+        ($commands.posix.snapshot.args -join ' ') | Should Be '-eo pid=,ppid=,lstart='
+    }
+
+    It 'does not terminate stale or reused process identities' {
+        $probePath = Join-Path $TestDrive 'stale-cleanup-probe.mjs'
+        $probeResultPath = Join-Path $TestDrive 'stale-cleanup-result.json'
+        [IO.File]::WriteAllText($probePath, @'
+import { writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+const runner = await import(pathToFileURL(process.argv[2]).href);
+const terminated = [];
+const residual = await runner.cleanupProcessTree(
+  [{ pid: 321, parentPid: 1, startedAt: "old-start" }],
+  "linux",
+  {
+    snapshotProcessRows: async () => [
+      { pid: 321, parentPid: 1, startedAt: "new-start" }
+    ],
+    processExists: () => true,
+    terminatePid: async (pid) => terminated.push(pid),
+    forceTerminatePid: async (pid) => terminated.push(pid)
+  }
+);
+await writeFile(process.argv[3], JSON.stringify({ terminated, residual }));
+'@, $utf8NoBom)
+        & node $probePath $runnerPath $probeResultPath 2> (Join-Path $TestDrive 'stale-cleanup-stderr.log')
+        $LASTEXITCODE | Should Be 0
+        $probe = Get-Content $probeResultPath -Raw | ConvertFrom-Json
+        @($probe.terminated).Count | Should Be 0
+        @($probe.residual).Count | Should Be 0
+    }
+
+    It 'terminates matching descendants leaf-first after identity verification' {
+        $probePath = Join-Path $TestDrive 'matching-cleanup-probe.mjs'
+        $probeResultPath = Join-Path $TestDrive 'matching-cleanup-result.json'
+        [IO.File]::WriteAllText($probePath, @'
+import { writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+const runner = await import(pathToFileURL(process.argv[2]).href);
+const live = new Set([10, 11]);
+const terminated = [];
+const rows = [
+  { pid: 10, parentPid: 1, startedAt: "root-start" },
+  { pid: 11, parentPid: 10, startedAt: "child-start" }
+];
+const residual = await runner.cleanupProcessTree(rows, "linux", {
+  snapshotProcessRows: async () => rows.filter((row) => live.has(row.pid)),
+  processExists: (pid) => live.has(pid),
+  terminatePid: async (pid) => {
+    terminated.push(pid);
+    live.delete(pid);
+  },
+  forceTerminatePid: async (pid) => {
+    terminated.push(pid);
+    live.delete(pid);
+  }
+});
+await writeFile(process.argv[3], JSON.stringify({ terminated, residual }));
+'@, $utf8NoBom)
+        & node $probePath $runnerPath $probeResultPath 2> (Join-Path $TestDrive 'matching-cleanup-stderr.log')
+        $LASTEXITCODE | Should Be 0
+        $probe = Get-Content $probeResultPath -Raw | ConvertFrom-Json
+        ($probe.terminated -join ',') | Should Be '11,10'
+        @($probe.residual).Count | Should Be 0
     }
 
     It 'does not block or disclose high-volume server stderr' {
@@ -287,6 +351,8 @@ await writeFile(process.argv[3], JSON.stringify(result));
             @{ toolName = '' },
             @{ arguments = @(1) },
             @{ timeoutSeconds = 0 },
+            @{ timeoutSeconds = 1.5 },
+            @{ timeoutSeconds = 2147484 },
             @{ timeoutSeconds = 'not-a-number' }
         )
         foreach ($overrides in $invalidRequests) {

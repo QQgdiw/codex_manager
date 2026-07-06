@@ -56,3 +56,9 @@
 - [ ] 设想 A：MCP 或 App 形式的自动工具管理。
 - [ ] 设想 B：工具管理与行业事件可视化。
 - [ ] 设想 C：行业事件中的工具发现、部署和测试联动。
+## 2026-07-06 Task 4 quality review follow-up
+
+- [x] Fix MCP smoke runner cleanup so captured processes are stored with PID identity metadata and revalidated before termination.
+- [x] Remove Windows `taskkill /T` usage; cleanup now terminates verified processes one at a time.
+- [x] Reject non-integer and above-Node-timer-limit `timeoutSeconds` values with `mcp_smoke_invalid_request`.
+- [x] Verification: RED target test failed 4 expected checks; GREEN target `McpSmokeRunner.Tests.ps1` passed 16/16; `node --check` and `git diff --check` exit code 0.
