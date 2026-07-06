@@ -754,8 +754,9 @@ Describe 'Codex tool manager entry point' {
             Should Be 'static_verified'
         @($body.Results | Where-Object { $_.Level -eq 'load' })[0].Status |
             Should Be 'load_verified'
-        @($body.Results | Where-Object { $_.Level -eq 'smoke' })[0].Status |
-            Should Be 'blocked'
+        $smokeResult = @($body.Results | Where-Object { $_.Level -eq 'smoke' })[0]
+        $smokeResult.Status | Should Be 'blocked'
+        $smokeResult.ErrorCode | Should Be 'smoke_verifier_missing'
         $log = Get-Content -LiteralPath $fake.Log -Raw
         $log | Should Match 'mcp get entry-mcp --json'
     }
