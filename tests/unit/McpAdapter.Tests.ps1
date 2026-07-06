@@ -99,6 +99,33 @@ function New-TestStartupFile {
     Set-Content -LiteralPath (Join-Path $dist 'index.js') -Value 'process.exit(0)' -Encoding ASCII
 }
 
+function New-TestSmokeRuntime {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Project,
+
+        [string]$WorkingDirectory = $TestDrive,
+
+        [string]$ScriptRelativePath = 'scripts/smoke/mcp/test.mjs'
+    )
+
+    $scriptPath = Join-Path $Project $ScriptRelativePath
+    New-Item -ItemType Directory -Path (Split-Path $scriptPath) -Force | Out-Null
+    Set-Content -LiteralPath $scriptPath -Encoding UTF8 -Value 'process.exit(0);'
+    $runnerPath = Join-Path $Project 'scripts\node\mcp-smoke-runner.mjs'
+    New-Item -ItemType Directory -Path (Split-Path $runnerPath) -Force | Out-Null
+    Set-Content -LiteralPath $runnerPath -Encoding UTF8 -Value 'process.exit(0);'
+    $sdk = Join-Path $WorkingDirectory 'node_modules\@modelcontextprotocol\sdk\dist\esm\client'
+    New-Item -ItemType Directory -Path $sdk -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $sdk 'index.js') -Encoding UTF8 -Value 'export {};'
+    Set-Content -LiteralPath (Join-Path $sdk 'stdio.js') -Encoding UTF8 -Value 'export {};'
+
+    return [pscustomobject]@{
+        ScriptPath = [IO.Path]::GetFullPath($scriptPath)
+        ScriptSha256 = (Get-FileHash $scriptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+}
+
 function Assert-McpPlanDoesNotLeak {
     param(
         [Parameter(Mandatory = $true)]
@@ -353,6 +380,30 @@ Describe 'Get-McpInstallPlan' {
         $plan.Message | Should Match 'working_directory'
     }
 
+    It 'rejects stdio startup files whose path contains a reparse point' {
+        $workRoot = Join-Path $TestDrive 'work-with-junction'
+        $outsideRoot = Join-Path $TestDrive 'outside-startup'
+        New-Item -ItemType Directory -Path $workRoot, $outsideRoot -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $outsideRoot 'index.js') -Value 'process.exit(0)' -Encoding ASCII
+        New-Item -ItemType Junction -Path (Join-Path $workRoot 'dist') -Target $outsideRoot | Out-Null
+
+        $plan = Get-McpInstallPlan -Tool (
+            New-TestMcpTool -SnapshotOverrides @{
+                stdio = @{
+                    command = 'node'
+                    args = @('dist/index.js')
+                    working_directory = $workRoot
+                    startup_file = 'dist/index.js'
+                }
+            }
+        )
+
+        $plan.Status | Should Be 'failed'
+        $plan.StartupFileExists | Should Be $false
+        $plan.AddCommand | Should Be $null
+        $plan.Message | Should Match 'reparse|startup_file|working_directory'
+    }
+
     It 'does not use top-level fields when the approved snapshot omits MCP fields' {
         $plan = Get-McpInstallPlan -Tool (
             New-TestMcpTool -SnapshotOverrides @{
@@ -573,6 +624,32 @@ Describe 'Get-McpSmokePlan' {
         $plan.ErrorCode | Should Be 'mcp_smoke_script_path_rejected'
     }
 
+    It 'rejects a lifecycle path containing a nested reparse point' {
+        $project = Join-Path $TestDrive 'nested-reparse-project'
+        $approvedRoot = Join-Path $project 'scripts\smoke\mcp'
+        $outside = Join-Path $TestDrive 'outside-nested-lifecycle'
+        New-Item -ItemType Directory -Path $approvedRoot, $outside -Force | Out-Null
+        $outsideScript = Join-Path $outside 'test.mjs'
+        Set-Content -LiteralPath $outsideScript -Encoding UTF8 -Value 'process.exit(0);'
+        New-Item -ItemType Junction -Path (Join-Path $approvedRoot 'nested') -Target $outside | Out-Null
+        New-TestSmokeRuntime -Project $project | Out-Null
+        New-TestStartupFile
+        $install = Get-McpInstallPlan -Tool (New-TestMcpTool -SnapshotOverrides @{
+            smoke = [pscustomobject]@{
+                tool_name = 'local_tool'; timeout_seconds = 10
+                expected_content_types = @('text')
+                script_path = 'scripts/smoke/mcp/nested/test.mjs'
+                script_sha256 = (Get-FileHash $outsideScript -Algorithm SHA256).Hash.ToLowerInvariant()
+                arguments = [pscustomobject]@{}
+            }
+        })
+
+        $plan = Get-McpSmokePlan -InstallPlan $install -ProjectRoot $project
+
+        $plan.Status | Should Be 'failed'
+        $plan.ErrorCode | Should Be 'mcp_smoke_script_path_rejected'
+    }
+
     It 'rejects a lifecycle script hash mismatch' {
         $project = Join-Path $TestDrive 'hash-project'
         $scriptDir = Join-Path $project 'scripts\smoke\mcp'
@@ -594,6 +671,50 @@ Describe 'Get-McpSmokePlan' {
 
         $plan.Status | Should Be 'failed'
         $plan.ErrorCode | Should Be 'mcp_smoke_script_hash_mismatch'
+    }
+
+    It 'rejects invalid smoke profile schema values' {
+        $cases = @(
+            @{ Name = 'absolute script path'; ScriptRelativePath = 'scripts/smoke/mcp/absolute.mjs'; ScriptPathMode = 'absolute'; HashMode = 'valid'; Timeout = 10; ContentTypes = @('text'); Arguments = [pscustomobject]@{} },
+            @{ Name = 'non mjs script'; ScriptRelativePath = 'scripts/smoke/mcp/not-mjs.js'; ScriptPathMode = 'relative'; HashMode = 'valid'; Timeout = 10; ContentTypes = @('text'); Arguments = [pscustomobject]@{} },
+            @{ Name = 'uppercase hash'; ScriptRelativePath = 'scripts/smoke/mcp/uppercase.mjs'; ScriptPathMode = 'relative'; HashMode = 'uppercase'; Timeout = 10; ContentTypes = @('text'); Arguments = [pscustomobject]@{} },
+            @{ Name = 'timeout too high'; ScriptRelativePath = 'scripts/smoke/mcp/timeout.mjs'; ScriptPathMode = 'relative'; HashMode = 'valid'; Timeout = 999; ContentTypes = @('text'); Arguments = [pscustomobject]@{} },
+            @{ Name = 'empty content types'; ScriptRelativePath = 'scripts/smoke/mcp/content.mjs'; ScriptPathMode = 'relative'; HashMode = 'valid'; Timeout = 10; ContentTypes = @(); Arguments = [pscustomobject]@{} },
+            @{ Name = 'non object arguments'; ScriptRelativePath = 'scripts/smoke/mcp/arguments.mjs'; ScriptPathMode = 'relative'; HashMode = 'valid'; Timeout = 10; ContentTypes = @('text'); Arguments = @('not-object') }
+        )
+
+        foreach ($case in $cases) {
+            $project = Join-Path $TestDrive ("schema-" + ($case.Name -replace '[^a-zA-Z0-9]', '-'))
+            $runtime = New-TestSmokeRuntime -Project $project -ScriptRelativePath $case.ScriptRelativePath
+            New-TestStartupFile
+            $scriptPath = if ($case.ScriptPathMode -eq 'absolute') {
+                $runtime.ScriptPath
+            }
+            else {
+                $case.ScriptRelativePath
+            }
+            $hash = if ($case.HashMode -eq 'uppercase') {
+                $runtime.ScriptSha256.ToUpperInvariant()
+            }
+            else {
+                $runtime.ScriptSha256
+            }
+            $install = Get-McpInstallPlan -Tool (New-TestMcpTool -SnapshotOverrides @{
+                smoke = [pscustomobject]@{
+                    tool_name = 'local_tool'
+                    timeout_seconds = $case.Timeout
+                    expected_content_types = $case.ContentTypes
+                    script_path = $scriptPath
+                    script_sha256 = $hash
+                    arguments = $case.Arguments
+                }
+            })
+
+            $plan = Get-McpSmokePlan -InstallPlan $install -ProjectRoot $project
+
+            $plan.Status | Should Not Be 'planned'
+            $plan.ErrorCode | Should Be 'mcp_smoke_profile_invalid'
+        }
     }
 }
 

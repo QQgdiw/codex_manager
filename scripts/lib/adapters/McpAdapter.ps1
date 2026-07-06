@@ -443,6 +443,12 @@ function Resolve-McpStartupFilePath {
             Error = 'stdio.startup_file must stay within stdio.working_directory.'
         }
     }
+    if (Test-McpAdapterPathChainReparsePoint -Root $workingDirectoryPath -Path $startupPath) {
+        return [pscustomobject][ordered]@{
+            Path = $null
+            Error = 'stdio.startup_file path must not contain reparse points.'
+        }
+    }
 
     return [pscustomobject][ordered]@{
         Path = $startupPath
@@ -743,6 +749,53 @@ function Test-McpAdapterReparsePoint {
     return $false
 }
 
+function Get-McpAdapterPathChain {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Root,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $rootFullPath = [IO.Path]::GetFullPath($Root).TrimEnd(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar
+    )
+    $pathFullPath = [IO.Path]::GetFullPath($Path)
+    $items = New-Object System.Collections.Generic.List[string]
+    $current = $pathFullPath
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+        [void]$items.Add($current)
+        if ([string]::Equals($current, $rootFullPath, [StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+        $parent = [IO.Path]::GetDirectoryName($current)
+        if ([string]::Equals($parent, $current, [StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+        $current = $parent
+    }
+
+    $chain = @($items.ToArray())
+    [array]::Reverse($chain)
+    return $chain
+}
+
+function Test-McpAdapterPathChainReparsePoint {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Root,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    return Test-McpAdapterReparsePoint -Paths @(
+        Get-McpAdapterPathChain -Root $Root -Path $Path
+    )
+}
+
 function Get-McpSmokePlan {
     [CmdletBinding()]
     param(
@@ -783,6 +836,13 @@ function Get-McpSmokePlan {
         -Names @('script_sha256', 'ScriptSha256')
     $timeoutValue = Get-McpAdapterString -InputObject $profile `
         -Names @('timeout_seconds', 'TimeoutSeconds')
+    $expectedContentTypes = @(
+        Get-McpAdapterArray -Value (
+            Get-McpAdapterMember -InputObject $profile `
+                -Names @('expected_content_types', 'ExpectedContentTypes')
+        )
+    )
+    $arguments = Get-McpAdapterMember -InputObject $profile -Names @('arguments', 'Arguments')
     if ([string]::IsNullOrWhiteSpace($toolName) -or
         [string]::IsNullOrWhiteSpace($scriptPathValue) -or
         [string]::IsNullOrWhiteSpace($expectedSha256) -or
@@ -793,10 +853,54 @@ function Get-McpSmokePlan {
             -InstallPlan $InstallPlan
     }
 
-    $timeoutSeconds = 0
-    if (-not [int]::TryParse($timeoutValue, [ref]$timeoutSeconds) -or $timeoutSeconds -le 0) {
+    $normalizedScriptPath = $scriptPathValue -replace '\\', '/'
+    if ([IO.Path]::IsPathRooted($scriptPathValue) -or
+        $normalizedScriptPath -notmatch '^scripts/smoke/mcp/.+\.mjs$') {
         return New-McpSmokePlanIssue -Status 'failed' `
-            -Message 'MCP smoke verifier timeout_seconds must be a positive integer.' `
+            -Message 'MCP smoke script_path must be a relative scripts/smoke/mcp/*.mjs path.' `
+            -ErrorCode 'mcp_smoke_profile_invalid' `
+            -InstallPlan $InstallPlan
+    }
+
+    if ($expectedSha256 -cnotmatch '^[0-9a-f]{64}$') {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP smoke script_sha256 must be lowercase 64-character hex.' `
+            -ErrorCode 'mcp_smoke_profile_invalid' `
+            -InstallPlan $InstallPlan
+    }
+
+    $timeoutSeconds = 0
+    if (-not [int]::TryParse($timeoutValue, [ref]$timeoutSeconds) -or
+        $timeoutSeconds -le 0 -or
+        $timeoutSeconds -gt 300) {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP smoke verifier timeout_seconds must be between 1 and 300.' `
+            -ErrorCode 'mcp_smoke_profile_invalid' `
+            -InstallPlan $InstallPlan
+    }
+
+    if ($expectedContentTypes.Count -eq 0) {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP smoke expected_content_types must not be empty.' `
+            -ErrorCode 'mcp_smoke_profile_invalid' `
+            -InstallPlan $InstallPlan
+    }
+    foreach ($contentType in $expectedContentTypes) {
+        $contentTypeText = [string]$contentType
+        if ([string]::IsNullOrWhiteSpace($contentTypeText) -or
+            $contentTypeText -notmatch '^[a-z][a-z0-9._/-]*$') {
+            return New-McpSmokePlanIssue -Status 'failed' `
+                -Message 'MCP smoke expected_content_types must contain legal strings.' `
+                -ErrorCode 'mcp_smoke_profile_invalid' `
+                -InstallPlan $InstallPlan
+        }
+    }
+
+    if ($null -eq $arguments -or
+        (-not ($arguments -is [System.Collections.IDictionary]) -and
+            -not ($arguments -is [pscustomobject]))) {
+        return New-McpSmokePlanIssue -Status 'failed' `
+            -Message 'MCP smoke arguments must be an object.' `
             -ErrorCode 'mcp_smoke_profile_invalid' `
             -InstallPlan $InstallPlan
     }
@@ -805,12 +909,7 @@ function Get-McpSmokePlan {
     $scriptsPath = [IO.Path]::GetFullPath((Join-Path $projectRootPath 'scripts'))
     $smokePath = [IO.Path]::GetFullPath((Join-Path $scriptsPath 'smoke'))
     $mcpPath = [IO.Path]::GetFullPath((Join-Path $smokePath 'mcp'))
-    $scriptCandidate = if ([IO.Path]::IsPathRooted($scriptPathValue)) {
-        $scriptPathValue
-    }
-    else {
-        Join-Path $projectRootPath $scriptPathValue
-    }
+    $scriptCandidate = Join-Path $projectRootPath $scriptPathValue
     $resolvedScriptPath = [IO.Path]::GetFullPath($scriptCandidate)
 
     if (-not (Test-McpAdapterPathWithinRoot -Path $resolvedScriptPath -Root $mcpPath)) {
@@ -820,12 +919,7 @@ function Get-McpSmokePlan {
             -InstallPlan $InstallPlan
     }
 
-    if (Test-McpAdapterReparsePoint -Paths @(
-            $scriptsPath,
-            $smokePath,
-            $mcpPath,
-            $resolvedScriptPath
-        )) {
+    if (Test-McpAdapterPathChainReparsePoint -Root $scriptsPath -Path $resolvedScriptPath) {
         return New-McpSmokePlanIssue -Status 'failed' `
             -Message 'MCP smoke script path must not contain reparse points.' `
             -ErrorCode 'mcp_smoke_script_path_rejected' `
@@ -897,14 +991,9 @@ function Get-McpSmokePlan {
         ErrorCode = $null
         InstallPlan = $InstallPlan
         ToolName = [string]$toolName
-        Arguments = Get-McpAdapterMember -InputObject $profile -Names @('arguments', 'Arguments')
+        Arguments = $arguments
         TimeoutSeconds = [int]$timeoutSeconds
-        ExpectedContentTypes = @(
-            Get-McpAdapterArray -Value (
-                Get-McpAdapterMember -InputObject $profile `
-                    -Names @('expected_content_types', 'ExpectedContentTypes')
-            )
-        )
+        ExpectedContentTypes = @($expectedContentTypes)
         ScriptPath = $resolvedScriptPath
         ScriptSha256 = [string]$expectedSha256
         RunnerPath = $runnerPath
