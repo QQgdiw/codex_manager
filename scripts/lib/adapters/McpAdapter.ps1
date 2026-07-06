@@ -796,6 +796,65 @@ function Test-McpAdapterPathChainReparsePoint {
     )
 }
 
+function Test-McpSmokeOperationRootDeleteSafe {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$OperationRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$TempRootParent
+    )
+
+    try {
+        if (-not (Test-Path -LiteralPath $OperationRoot -PathType Container)) {
+            return [pscustomobject][ordered]@{
+                Safe = $true
+                Exists = $false
+                Message = 'MCP smoke operation root no longer exists.'
+            }
+        }
+
+        $parentFullPath = [IO.Path]::GetFullPath($TempRootParent).TrimEnd(
+            [IO.Path]::DirectorySeparatorChar,
+            [IO.Path]::AltDirectorySeparatorChar
+        )
+        $operationFullPath = [IO.Path]::GetFullPath($OperationRoot).TrimEnd(
+            [IO.Path]::DirectorySeparatorChar,
+            [IO.Path]::AltDirectorySeparatorChar
+        )
+
+        if ([string]::Equals($operationFullPath, $parentFullPath, [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-McpAdapterPathWithinRoot -Path $operationFullPath -Root $parentFullPath)) {
+            return [pscustomobject][ordered]@{
+                Safe = $false
+                Exists = $true
+                Message = 'MCP smoke operation root escaped the temp root parent.'
+            }
+        }
+
+        if (Test-McpAdapterPathChainReparsePoint -Root $parentFullPath -Path $operationFullPath) {
+            return [pscustomobject][ordered]@{
+                Safe = $false
+                Exists = $true
+                Message = 'MCP smoke operation root path contains a reparse point.'
+            }
+        }
+
+        return [pscustomobject][ordered]@{
+            Safe = $true
+            Exists = $true
+            Message = 'MCP smoke operation root is safe to delete.'
+        }
+    }
+    catch {
+        return [pscustomobject][ordered]@{
+            Safe = $false
+            Exists = $true
+            Message = 'MCP smoke operation root delete safety could not be verified.'
+        }
+    }
+}
+
 function Get-McpSmokePlan {
     [CmdletBinding()]
     param(
@@ -872,9 +931,9 @@ function Get-McpSmokePlan {
     $timeoutSeconds = 0
     if (-not [int]::TryParse($timeoutValue, [ref]$timeoutSeconds) -or
         $timeoutSeconds -le 0 -or
-        $timeoutSeconds -gt 300) {
+        $timeoutSeconds -gt 30) {
         return New-McpSmokePlanIssue -Status 'failed' `
-            -Message 'MCP smoke verifier timeout_seconds must be between 1 and 300.' `
+            -Message 'MCP smoke verifier timeout_seconds must be between 1 and 30.' `
             -ErrorCode 'mcp_smoke_profile_invalid' `
             -InstallPlan $InstallPlan
     }
@@ -1619,16 +1678,29 @@ function Test-ManagedMcpSmoke {
                 [void]$residuals.Add((New-McpSmokeResidualSummary -Step 'mcp_smoke_cleanup' -Action 'cleanup' -Result $cleanup.Result -ErrorCode $cleanup.Error.ErrorCode -Message 'MCP smoke cleanup failed; output was not retained.'))
             }
 
-            try {
-                Remove-Item -LiteralPath $operationRoot -Recurse -Force -ErrorAction Stop
-            }
-            catch {
+            $deleteSafety = Test-McpSmokeOperationRootDeleteSafe `
+                -OperationRoot $operationRoot `
+                -TempRootParent $Plan.TempRootParent
+            if (-not $deleteSafety.Safe) {
                 $cleanupFailed = $true
                 [void]$residuals.Add([pscustomobject][ordered]@{
                         Step = 'mcp_smoke_operation_root_delete'
                         Succeeded = $false
-                        Message = 'MCP smoke operation root could not be removed.'
+                        Message = $deleteSafety.Message
                     })
+            }
+            elseif ($deleteSafety.Exists) {
+                try {
+                    Remove-Item -LiteralPath $operationRoot -Recurse -Force -ErrorAction Stop
+                }
+                catch {
+                    $cleanupFailed = $true
+                    [void]$residuals.Add([pscustomobject][ordered]@{
+                            Step = 'mcp_smoke_operation_root_delete'
+                            Succeeded = $false
+                            Message = 'MCP smoke operation root could not be removed.'
+                        })
+                }
             }
 
             if ($residualProcess) {

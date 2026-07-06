@@ -172,6 +172,12 @@
 - Fix: non-Windows cleanup identity requires `startTick`; if the expected or current process lacks it while the PID exists, cleanup throws `mcp_smoke_cleanup_failed` before any terminate call.
 - GREEN evidence: `.task4-posix-green-mcp-smoke.log` passed 18/18, `.task4-posix-node-check.log` exit code 0, and `.task4-posix-diff-check.log` exit code 0 with only a CRLF warning from Git.
 
+## 2026-07-06 Final review smoke hardening
+
+- Runner cleanup pitfall: a detached child spawned after the initial process snapshot is unprovable if the root process exits before the cleanup refresh. In that state the runner must return `mcp_smoke_cleanup_failed` or residual failure, never `smoke_verified`.
+- Adapter cleanup pitfall: `Remove-Item -Recurse` must not run until the operation root is freshly proven below `Plan.TempRootParent` and the parent/root path chain has no reparse point.
+- Timeout schema pitfall: approved snapshots consumed by `Get-McpSmokePlan` must keep the whitelist `timeout_seconds` bound at 1..30, not widen it to runner/runtime limits.
+
 ## 2026-07-06：sequential-thinking MCP 自动 smoke 验证闭环
 
 - 重新生成单工具 pilot 配置并执行 plan：退出码 0，计划条目 1，Errors 为空。

@@ -38,7 +38,7 @@ $nodePath = (Get-Command node).Source
 
 function Invoke-TestSmokeRunner {
     param(
-        [ValidateSet('success', 'missing', 'timeout', 'initialize-timeout', 'descendant', 'stderr-flood', 'sensitive-error', 'stubborn')]
+        [ValidateSet('success', 'missing', 'timeout', 'initialize-timeout', 'descendant', 'late-detached-exit', 'stderr-flood', 'sensitive-error', 'stubborn')]
         [string]$Mode,
         [int]$TimeoutSeconds = 5,
         [hashtable]$RequestOverrides = @{},
@@ -95,6 +95,20 @@ for await (const line of input) {
       name, description: "fixture", inputSchema: { type: "object" }
     }] }});
   } else if (message.method === "tools/call" && mode !== "timeout") {
+    if (mode === "late-detached-exit") {
+      const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+        detached: true,
+        stdio: "ignore"
+      });
+      writeFileSync(childPidPath, String(child.pid));
+      child.unref();
+      process.stdout.write(`${JSON.stringify({
+        jsonrpc: "2.0", id: message.id, result: {
+          content: [{ type: "text", text: "ok" }], isError: false
+        }
+      })}\n`, () => setTimeout(() => process.exit(0), 25));
+      continue;
+    }
     send({ jsonrpc: "2.0", id: message.id, result: {
       content: [{ type: "text", text: "ok" }], isError: false
     }});
@@ -218,6 +232,20 @@ Describe 'MCP smoke runner' {
             $result.status | Should Be 'smoke_verified'
             (Get-Process -Id $childPid -ErrorAction SilentlyContinue) | Should BeNullOrEmpty
             $result.residualProcess | Should Be $false
+        } finally {
+            Stop-Process -Id $childPid -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'does not verify smoke when a late detached child outlives an exited server root' {
+        $run = Invoke-TestSmokeRunner -Mode 'late-detached-exit'
+        $childPid = [int](Get-Content $run.ChildPidPath -Raw)
+        try {
+            $run.ExitCode | Should Be 1
+            $result = Get-Content $run.ResultPath -Raw | ConvertFrom-Json
+            $result.status | Should Not Be 'smoke_verified'
+            $result.errorCode | Should Match 'mcp_smoke_(cleanup_failed|residual_process)'
+            $result.residualProcess | Should Be $true
         } finally {
             Stop-Process -Id $childPid -Force -ErrorAction SilentlyContinue
         }

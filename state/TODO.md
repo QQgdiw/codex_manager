@@ -71,3 +71,10 @@
 - [x] Replace POSIX cleanup identity matching with high precision Linux `/proc/<pid>/stat` field 22 `starttime` ticks where available.
 - [x] Fail cleanup verification with `mcp_smoke_cleanup_failed` when a non-Windows process lacks high precision identity.
 - [x] Verification: RED target test failed 5 expected checks; GREEN target `McpSmokeRunner.Tests.ps1` passed 18/18; `node --check` and `git diff --check` exit code 0.
+
+## 2026-07-06 Final review smoke hardening
+
+- [x] Fail MCP smoke verification when the server root disappears before cleanup can refresh and prove the process tree.
+- [x] Revalidate MCP smoke operation root path and reparse status before recursive deletion.
+- [x] Align MCP smoke plan timeout validation with whitelist schema maximum of 30 seconds.
+- [x] Verification: RED target log captured expected failures; final target passed 54/54; final all passed 355/355; `node --check` and `git diff --check` passed.

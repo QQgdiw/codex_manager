@@ -468,9 +468,19 @@ async function runSmoke(requestPath, resultPath) {
               "MCP server process cleanup could not be verified.",
             );
     };
-    if (serverPid && processExists(serverPid)) {
+    if (serverPid) {
       try {
-        processTree = mergeProcessTrees(processTree, await snapshotProcessTree(serverPid));
+        const refreshedProcessTree = await snapshotProcessTree(serverPid);
+        if (refreshedProcessTree.length > 0) {
+          processTree = mergeProcessTrees(processTree, refreshedProcessTree);
+        } else if (processTree.length > 0) {
+          recordCleanupError(
+            new SmokeFailure(
+              "mcp_smoke_cleanup_failed",
+              "MCP server process cleanup could not be verified.",
+            ),
+          );
+        }
       } catch (error) {
         recordCleanupError(error);
       }

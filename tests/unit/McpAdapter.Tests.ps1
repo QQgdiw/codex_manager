@@ -678,6 +678,7 @@ Describe 'Get-McpSmokePlan' {
             @{ Name = 'absolute script path'; ScriptRelativePath = 'scripts/smoke/mcp/absolute.mjs'; ScriptPathMode = 'absolute'; HashMode = 'valid'; Timeout = 10; ContentTypes = @('text'); Arguments = [pscustomobject]@{} },
             @{ Name = 'non mjs script'; ScriptRelativePath = 'scripts/smoke/mcp/not-mjs.js'; ScriptPathMode = 'relative'; HashMode = 'valid'; Timeout = 10; ContentTypes = @('text'); Arguments = [pscustomobject]@{} },
             @{ Name = 'uppercase hash'; ScriptRelativePath = 'scripts/smoke/mcp/uppercase.mjs'; ScriptPathMode = 'relative'; HashMode = 'uppercase'; Timeout = 10; ContentTypes = @('text'); Arguments = [pscustomobject]@{} },
+            @{ Name = 'timeout above schema max'; ScriptRelativePath = 'scripts/smoke/mcp/timeout31.mjs'; ScriptPathMode = 'relative'; HashMode = 'valid'; Timeout = 31; ContentTypes = @('text'); Arguments = [pscustomobject]@{} },
             @{ Name = 'timeout too high'; ScriptRelativePath = 'scripts/smoke/mcp/timeout.mjs'; ScriptPathMode = 'relative'; HashMode = 'valid'; Timeout = 999; ContentTypes = @('text'); Arguments = [pscustomobject]@{} },
             @{ Name = 'empty content types'; ScriptRelativePath = 'scripts/smoke/mcp/content.mjs'; ScriptPathMode = 'relative'; HashMode = 'valid'; Timeout = 10; ContentTypes = @(); Arguments = [pscustomobject]@{} },
             @{ Name = 'non object arguments'; ScriptRelativePath = 'scripts/smoke/mcp/arguments.mjs'; ScriptPathMode = 'relative'; HashMode = 'valid'; Timeout = 10; ContentTypes = @('text'); Arguments = @('not-object') }
@@ -866,6 +867,35 @@ Describe 'Test-ManagedMcpSmoke' {
         $result.ErrorCode | Should Be 'mcp_smoke_cleanup_failed'
         ($result | ConvertTo-Json -Depth 12 -Compress) |
             Should Not Match 'arguments|prompt|mcpBody|secret prompt|secret body'
+    }
+
+    It 'does not recursively delete an operation root replaced with a junction' {
+        $outside = Join-Path $TestDrive 'outside-cleanup-target'
+        $sentinel = Join-Path $outside 'sentinel.txt'
+        New-Item -ItemType Directory -Path $outside -Force | Out-Null
+        Set-Content -LiteralPath $sentinel -Value 'do not delete' -Encoding ASCII
+
+        $result = Test-ManagedMcpSmoke -Plan $script:smokePlan -Executor {
+            param($Command)
+            $args = @($Command.Arguments)
+            if ($args -contains 'prepare') { return New-SuccessProcessResult -StdOut '{"status":"ok"}' }
+            if ($args[0] -eq $script:smokePlan.RunnerPath) {
+                [IO.File]::WriteAllText($args[2], '{"status":"smoke_verified","errorCode":null,"contentTypes":["text"],"isError":false,"residualProcess":false}', $script:utf8NoBom)
+                return New-SuccessProcessResult -StdOut '{"status":"smoke_verified"}'
+            }
+            if ($args -contains 'validate') { return New-SuccessProcessResult -StdOut '{"status":"ok"}' }
+            if ($args -contains 'cleanup') {
+                Remove-Item -LiteralPath $Command.WorkingDirectory -Recurse -Force
+                New-Item -ItemType Junction -Path $Command.WorkingDirectory -Target $outside | Out-Null
+                return New-SuccessProcessResult -StdOut '{"status":"ok"}'
+            }
+            throw 'unexpected command'
+        }
+
+        $result.Status | Should Not Be 'smoke_verified'
+        $result.ErrorCode | Should Be 'mcp_smoke_cleanup_failed'
+        (Test-Path -LiteralPath $sentinel -PathType Leaf) | Should Be $true
+        (@($result.Residuals).Step -contains 'mcp_smoke_operation_root_delete') | Should Be $true
     }
 }
 

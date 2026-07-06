@@ -73,3 +73,9 @@
 ## 2026-07-06 Task 4 POSIX Identity Note
 
 - POSIX MCP smoke cleanup must not rely on second-granularity `lstart`. Linux uses `/proc/<pid>/stat` field 22 `starttime` ticks; if high precision identity is unavailable, cleanup verification fails before terminate.
+
+## 2026-07-06 Final Review Smoke Note
+
+- MCP smoke verification now treats an exited server root before cleanup refresh as unverified cleanup and fails instead of reporting `smoke_verified`.
+- MCP smoke operation-root deletion is guarded by a final within-parent and no-reparse check immediately before `Remove-Item -Recurse`.
+- MCP smoke `timeout_seconds` remains aligned to whitelist schema `1..30` when approved snapshots are planned.
