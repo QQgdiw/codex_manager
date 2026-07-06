@@ -148,3 +148,11 @@
 - 管理器验证结果为 static=`static_verified`、load=`load_verified`、smoke=`blocked`；整体退出码为 1 的原因是尚未接入自动 smoke verifier，错误码为 `smoke_verifier_missing`，不是部署或 load 失败。
 - 使用本地 `@modelcontextprotocol/sdk` 1.29.0 独立连接已部署服务器，完成初始化、`tools/list` 和一次低副作用 `sequentialthinking` 调用；进程退出码为 0，公布工具为 `sequentialthinking`，返回内容类型为 `text`。
 - 当前最高证据为“人工协议 smoke 通过”；管理器自动 smoke verifier 仍待实现。由于 load 与人工 smoke 均成功，本次未执行回滚，也没有已知残留子进程。
+
+## 2026-07-06：自动 MCP smoke verifier Task 1-4
+
+- Task 1 已扩展白名单 smoke schema，并将批准的 smoke profile 纳入 approved snapshot。后续审批快照必须保留数组形状，避免空数组丢失或单元素数组标量化。
+- Task 2 已为受管进程增加 `ClearEnvironment`、`Environment` 和 `WorkingDirectory` 支持；清空后只传入显式环境变量，不能隐式恢复宿主 `SystemRoot`。
+- Task 3 已允许适配器注入 `StaticVerifier`；异常路径必须传入敏感值脱敏列表，存在但类型错误的 `StaticVerifier` 必须失败，不能按未配置静默跳过。
+- Task 4 已实现通用 Node MCP stdio smoke runner。runner 必须忽略服务端 stderr 以避免背压和敏感诊断泄漏，必须对输入结构和超时做显式校验，必须在成功、失败、超时路径执行有界进程树清理并检查残留。
+- Task 4 的最终质量复核因子代理额度限制改由主会话人工完成；验证证据为 `node --check scripts/node/mcp-smoke-runner.mjs` 通过、目标集成测试 14/14 通过、全量 integration 43/43 通过、`git diff --check` 无输出。
