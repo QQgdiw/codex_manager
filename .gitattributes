@@ -1,0 +1,2 @@
+scripts/node/*.mjs text eol=lf
+scripts/smoke/mcp/*.mjs text eol=lf
