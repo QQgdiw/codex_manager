@@ -101,6 +101,19 @@ args = ["dist/index.js"]
 working_directory = "E:\\codex\\MCP\\servers\\src\\sequentialthinking"
 startup_file = "dist/index.js"
 
+[tools.smoke]
+tool_name = "sequentialthinking"
+timeout_seconds = 10
+expected_content_types = ["text"]
+script_path = "scripts/smoke/mcp/sequential-thinking.mjs"
+script_sha256 = "e4d836f6f5c542cd257e147b41480784cbb855e2f7b781012c9b990764b39a63"
+
+[tools.smoke.arguments]
+thought = "Codex tool manager automated smoke verification."
+nextThoughtNeeded = false
+thoughtNumber = 1
+totalThoughts = 1
+
 [[tools]]
 id = "skill.context-engineering.context-fundamentals"
 name = "Context Engineering Fundamentals"

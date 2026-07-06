@@ -187,7 +187,8 @@ function Read-ManagerPlan {
 function ConvertTo-ManagerVerificationTool {
     param(
         [object]$Item,
-        [AllowNull()][scriptblock]$Executor
+        [AllowNull()][scriptblock]$Executor,
+        [string]$ProjectRoot = $script:ProjectRoot
     )
 
     if ($Item.Type -eq 'plugin') {
@@ -218,6 +219,15 @@ function ConvertTo-ManagerVerificationTool {
     if ($Item.Type -eq 'mcp') {
         $tool | Add-Member -NotePropertyName LoadVerifier `
             -NotePropertyValue (New-ManagerMcpLoadVerifier -Executor $Executor)
+        $smokeMember = Get-ProjectMember -InputObject $Item.ApprovedSnapshot -Name 'smoke'
+        if ($smokeMember.Exists) {
+            $tool | Add-Member -NotePropertyName StaticVerifier `
+                -NotePropertyValue (New-ManagerMcpStaticVerifier -ProjectRoot $ProjectRoot)
+            $tool | Add-Member -NotePropertyName SmokeVerifier `
+                -NotePropertyValue (New-ManagerMcpSmokeVerifier `
+                    -Executor $Executor `
+                    -ProjectRoot $ProjectRoot)
+        }
     }
 
     return $tool
@@ -251,10 +261,22 @@ function New-ManagerCodexExecutor {
             $resolvedFilePath = [string]@($resolvedCommand)[0].Source
         }
 
+        $timeoutMember = Get-ProjectMember -InputObject $Command -Name 'TimeoutSeconds'
+        $commandTimeout = if ($timeoutMember.Exists) { [int]$timeoutMember.Value } else { $TimeoutSeconds }
+        $workingMember = Get-ProjectMember -InputObject $Command -Name 'WorkingDirectory'
+        $commandWorkingDirectory = if ($workingMember.Exists) { [string]$workingMember.Value } else { $null }
+        $environmentMember = Get-ProjectMember -InputObject $Command -Name 'Environment'
+        $commandEnvironment = if ($environmentMember.Exists) { $environmentMember.Value } else { $null }
+        $clearMember = Get-ProjectMember -InputObject $Command -Name 'ClearEnvironment'
+        $clearEnvironment = $clearMember.Exists -and [bool]$clearMember.Value
+
         Invoke-ManagedProcess `
             -FilePath $resolvedFilePath `
             -Arguments $argumentValues `
-            -TimeoutSeconds $TimeoutSeconds
+            -TimeoutSeconds $commandTimeout `
+            -WorkingDirectory $commandWorkingDirectory `
+            -Environment $commandEnvironment `
+            -ClearEnvironment:$clearEnvironment
     }.GetNewClosure()
 }
 
@@ -410,6 +432,28 @@ function New-ManagerMcpLoadVerifier {
     }.GetNewClosure()
 }
 
+function New-ManagerMcpStaticVerifier {
+    param([string]$ProjectRoot)
+
+    return {
+        param([object]$Tool)
+        $install = Get-McpInstallPlan -Tool $Tool
+        $smoke = Get-McpSmokePlan -InstallPlan $install -ProjectRoot $ProjectRoot
+        Test-ManagedMcpSmokeProfile -Plan $smoke
+    }.GetNewClosure()
+}
+
+function New-ManagerMcpSmokeVerifier {
+    param([scriptblock]$Executor, [string]$ProjectRoot)
+
+    return {
+        param([object]$Tool)
+        $install = Get-McpInstallPlan -Tool $Tool
+        $smoke = Get-McpSmokePlan -InstallPlan $install -ProjectRoot $ProjectRoot
+        Test-ManagedMcpSmoke -Plan $smoke -Executor $Executor
+    }.GetNewClosure()
+}
+
 function New-ManagerAdapterMap {
     param([AllowNull()][scriptblock]$Executor)
 
@@ -527,7 +571,10 @@ function Invoke-ManagerVerify {
     $results = New-Object System.Collections.Generic.List[object]
     $executor = New-ManagerCodexExecutor
     foreach ($item in @($plan.Items)) {
-        $tool = ConvertTo-ManagerVerificationTool -Item $item -Executor $executor
+        $tool = ConvertTo-ManagerVerificationTool `
+            -Item $item `
+            -Executor $executor `
+            -ProjectRoot $script:ProjectRoot
         $results.Add((Invoke-StaticVerification -Tool $tool))
         $results.Add((Invoke-LoadVerification -Tool $tool))
         $results.Add((Invoke-SmokeVerification -Tool $tool))

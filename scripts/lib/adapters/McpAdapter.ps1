@@ -1252,10 +1252,14 @@ function Test-McpAdapterStringArrayEqual {
 
 function New-McpSmokeLifecycleCommand {
     param([object]$Plan, [string]$Action, [string]$OperationRoot, [string]$ResultPath)
-    $readRoots = "$($Plan.ScriptPath),$OperationRoot"
+    $environment = New-McpSmokeProcessEnvironment -Values @{
+        SMOKE_ACTION = $Action
+        SMOKE_TEMP_ROOT = $OperationRoot
+    }
     $arguments = @(
         '--permission',
-        "--allow-fs-read=$readRoots",
+        "--allow-fs-read=$($Plan.ScriptPath)",
+        "--allow-fs-read=$OperationRoot",
         "--allow-fs-write=$OperationRoot",
         $Plan.ScriptPath,
         '--action', $Action,
@@ -1268,8 +1272,25 @@ function New-McpSmokeLifecycleCommand {
         TimeoutSeconds = $Plan.TimeoutSeconds
         WorkingDirectory = $OperationRoot
         ClearEnvironment = $true
-        Environment = @{ SMOKE_ACTION = $Action; SMOKE_TEMP_ROOT = $OperationRoot }
+        Environment = $environment
     }
+}
+
+function New-McpSmokeProcessEnvironment {
+    param([hashtable]$Values)
+
+    $environment = @{}
+    if (-not [string]::IsNullOrWhiteSpace($env:SystemRoot)) {
+        $environment.SystemRoot = $env:SystemRoot
+        $environment.Path = @(
+            (Join-Path $env:SystemRoot 'System32'),
+            (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0')
+        ) -join [IO.Path]::PathSeparator
+    }
+    foreach ($key in $Values.Keys) {
+        $environment[$key] = $Values[$key]
+    }
+    return $environment
 }
 
 function New-McpSmokeResult {
@@ -1511,7 +1532,7 @@ function Test-ManagedMcpSmoke {
                 TimeoutSeconds = [int]$Plan.TimeoutSeconds
                 WorkingDirectory = $operationRoot
                 ClearEnvironment = $true
-                Environment = @{}
+                Environment = New-McpSmokeProcessEnvironment -Values @{}
             }
             $runnerResult = Invoke-McpAdapterExecutor -Command $runnerCommand -Executor $Executor -SensitiveValues $Plan.InstallPlan.SensitiveRedactions
             [void]$checks.Add('mcp_smoke_runner')
@@ -1562,8 +1583,7 @@ function Test-ManagedMcpSmoke {
         }
 
         if ($null -eq $primaryError) {
-            $validatePath = Join-Path $operationRoot 'validate-result.json'
-            $validate = Invoke-McpSmokeLifecycleStep -Plan $Plan -Action 'validate' -OperationRoot $operationRoot -ResultPath $validatePath -Executor $Executor
+            $validate = Invoke-McpSmokeLifecycleStep -Plan $Plan -Action 'validate' -OperationRoot $operationRoot -ResultPath $resultPath -Executor $Executor
             [void]$checks.Add('mcp_smoke_validate')
             if (-not $validate.Succeeded) {
                 $primaryError = $validate.Error
@@ -1572,11 +1592,10 @@ function Test-ManagedMcpSmoke {
     }
     finally {
         if (-not [string]::IsNullOrWhiteSpace($operationRoot)) {
-            $cleanupPath = Join-Path $operationRoot 'cleanup-result.json'
             $cleanup = $null
             [void]$checks.Add('mcp_smoke_cleanup')
             try {
-                $cleanup = Invoke-McpSmokeLifecycleStep -Plan $Plan -Action 'cleanup' -OperationRoot $operationRoot -ResultPath $cleanupPath -Executor $Executor
+                $cleanup = Invoke-McpSmokeLifecycleStep -Plan $Plan -Action 'cleanup' -OperationRoot $operationRoot -ResultPath $resultPath -Executor $Executor
             }
             catch {
                 $cleanup = [pscustomobject][ordered]@{

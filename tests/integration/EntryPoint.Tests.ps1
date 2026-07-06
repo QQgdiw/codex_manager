@@ -292,15 +292,13 @@ function ConvertFrom-EntryPointJson {
 
 function New-FakeCodexCli {
     param(
-        [string]$Root,
-        [string]$McpStartupFile = (Join-Path $Root 'server\dist\index.js')
+        [string]$Root
     )
 
     $bin = Join-Path $Root 'fake-bin'
     New-Item -ItemType Directory -Path $bin -Force | Out-Null
     $log = Join-Path $Root 'fake-codex.log'
     $script = Join-Path $bin 'codex.cmd'
-    $mcpStartupFileJson = $McpStartupFile.Replace('\', '\\')
     Set-Content -LiteralPath $script -Encoding ASCII -Value @"
 @echo off
 echo %~1 %~2 %~3 %~4 %~5 %~6 %~7>>"%CODEX_TOOL_MANAGER_FAKE_LOG%"
@@ -321,7 +319,7 @@ if "%~1"=="mcp" if "%~2"=="add" (
   exit /b 0
 )
 if "%~1"=="mcp" if "%~2"=="get" (
-  echo {"name":"%~3","enabled":true,"transport":{"type":"stdio","command":"node","args":["$mcpStartupFileJson"],"cwd":null}}
+  echo %CODEX_TOOL_MANAGER_FAKE_MCP_GET_JSON%
   exit /b 0
 )
 echo unsupported fake codex command: %* 1>&2
@@ -710,12 +708,23 @@ Describe 'Codex tool manager entry point' {
     It 'verifies an approved mcp through the Codex MCP get output' {
         $root = Join-Path $TestDrive 'mcp-verify'
         $fixture = New-EntryPointMcpFixture -Root $root
-        $fake = New-FakeCodexCli -Root $root -McpStartupFile ([IO.Path]::GetFullPath($fixture.StartupFile))
+        $fake = New-FakeCodexCli -Root $root
         $oldPath = $env:PATH
         $oldLog = $env:CODEX_TOOL_MANAGER_FAKE_LOG
+        $oldGet = $env:CODEX_TOOL_MANAGER_FAKE_MCP_GET_JSON
         try {
             $env:PATH = "$($fake.Bin);$oldPath"
             $env:CODEX_TOOL_MANAGER_FAKE_LOG = $fake.Log
+            $env:CODEX_TOOL_MANAGER_FAKE_MCP_GET_JSON = ([ordered]@{
+                name = 'entry-mcp'
+                enabled = $true
+                transport = [ordered]@{
+                    type = 'stdio'
+                    command = 'node'
+                    args = @([IO.Path]::GetFullPath($fixture.StartupFile))
+                    cwd = $null
+                }
+            } | ConvertTo-Json -Depth 8 -Compress)
 
             $run = Invoke-EntryPointProcess -Arguments @(
                 'verify', '-Config', $fixture.Config, '-Whitelist', $fixture.Whitelist
@@ -728,6 +737,12 @@ Describe 'Codex tool manager entry point' {
             }
             else {
                 $env:CODEX_TOOL_MANAGER_FAKE_LOG = $oldLog
+            }
+            if ($null -eq $oldGet) {
+                Remove-Item Env:\CODEX_TOOL_MANAGER_FAKE_MCP_GET_JSON -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:CODEX_TOOL_MANAGER_FAKE_MCP_GET_JSON = $oldGet
             }
         }
 
@@ -743,6 +758,50 @@ Describe 'Codex tool manager entry point' {
             Should Be 'blocked'
         $log = Get-Content -LiteralPath $fake.Log -Raw
         $log | Should Match 'mcp get entry-mcp --json'
+    }
+
+    It 'returns smoke verified for an approved sequential-thinking profile' {
+        $root = Join-Path $TestDrive 'sequential-smoke'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $config = Join-Path $root 'config.toml'
+        Write-EntryPointTextFile -Path $config -Text @"
+schema_version = 1
+name = "sequential-smoke"
+enabled_tools = ["mcp.modelcontextprotocol.sequential-thinking"]
+"@
+        $startup = 'E:\codex\MCP\servers\src\sequentialthinking\dist\index.js'
+        (Test-Path -LiteralPath $startup -PathType Leaf) | Should Be $true
+        $fake = New-FakeCodexCli -Root $root
+        $oldPath = $env:PATH
+        $oldLog = $env:CODEX_TOOL_MANAGER_FAKE_LOG
+        $oldGet = $env:CODEX_TOOL_MANAGER_FAKE_MCP_GET_JSON
+        try {
+            $env:PATH = "$($fake.Bin);$oldPath"
+            $env:CODEX_TOOL_MANAGER_FAKE_LOG = $fake.Log
+            $env:CODEX_TOOL_MANAGER_FAKE_MCP_GET_JSON = ([ordered]@{
+                name = 'modelcontextprotocol-sequential-thinking'
+                enabled = $true
+                transport = [ordered]@{
+                    type = 'stdio'; command = 'node'; args = @($startup); cwd = $null
+                }
+            } | ConvertTo-Json -Depth 8 -Compress)
+            $run = Invoke-EntryPointProcess -Arguments @(
+                'verify', '-Config', $config,
+                '-Whitelist', (Join-Path $projectRoot 'Resources\tool_whitelist.toml')
+            )
+        }
+        finally {
+            $env:PATH = $oldPath
+            if ($null -eq $oldLog) { Remove-Item Env:\CODEX_TOOL_MANAGER_FAKE_LOG -ErrorAction SilentlyContinue }
+            else { $env:CODEX_TOOL_MANAGER_FAKE_LOG = $oldLog }
+            if ($null -eq $oldGet) { Remove-Item Env:\CODEX_TOOL_MANAGER_FAKE_MCP_GET_JSON -ErrorAction SilentlyContinue }
+            else { $env:CODEX_TOOL_MANAGER_FAKE_MCP_GET_JSON = $oldGet }
+        }
+        $body = ConvertFrom-EntryPointJson -Run $run
+        $run.ExitCode | Should Be 0
+        $body.Status | Should Be 'succeeded'
+        @($body.Results | Where-Object Level -eq 'smoke')[0].Status |
+            Should Be 'smoke_verified'
     }
 
     It 'verifies an approved managed skill through installed content hash' {
