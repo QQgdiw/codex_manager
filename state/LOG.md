@@ -187,3 +187,13 @@
 - 真实配置核验：`modelcontextprotocol-sequential-thinking` enabled=true，transport=`stdio`，command=`node`，args 为绝对路径 `E:\codex\MCP\servers\src\sequentialthinking\dist\index.js`。
 - 残留核验：目标 sequential-thinking Node 服务器进程数量为 0；`.tmp\mcp-smoke` operation 子目录数量为 0。
 - 记录边界：自动 smoke 只记录工具名、内容类型和错误码，不记录完整 thought 或 MCP 返回正文；Node permission 不提供网络硬隔离；verifier 不执行卸载。
+
+## 2026-07-12：filesystem MCP 真实接入与 rollback 锁等待
+
+- filesystem MCP 已接入自动 smoke：白名单启动参数从 `dist/index.js` 扩展为 `dist/index.js`, `E:\codex`，真实 Codex 配置核验显示 args 为绝对 `dist\index.js` 路径加 `E:\codex`。
+- filesystem smoke 使用通用 MCP runner 调用 `write_file`，参数中的 `${MCP_SMOKE_TEMP_ROOT}` 会在运行时替换为本次 operation root，避免静态白名单写死临时路径。
+- 生命周期脚本 `scripts/smoke/mcp/filesystem.mjs` 校验结果状态、内容类型、`write_file` 广告工具和 marker 文件内容，cleanup 删除 marker 与 result。
+- 临时 TOML 配置不能用 Windows PowerShell 5 的 `Set-Content -Encoding UTF8` 生成；该方式会写入 BOM，当前 TOML 转换器会在第 1 列报 `Invalid statement`。临时 TOML 应使用 UTF-8 no BOM 或补丁方式生成。
+- PowerShell 外层调用 `-Command` 时，`$r`、`-join " | "` 等片段容易被外层解释或破坏；复杂命令优先写成脚本文件或使用单层、简单输出。
+- 全量测试首次失败在 rollback 并发写入用例：32 个子进程竞争同一 journal lock 时，30 秒等待上限在当前机器负载下会触发 `Change journal is busy.`。将锁等待上限提高到 120 秒后，单项 rollback 集成测试和全量测试均通过。
+- 最终验证：filesystem 真实 verify 结果为 static=`static_verified`、load=`load_verified`、smoke=`smoke_verified`；目标 filesystem Node 进程数为 0；`.tmp\mcp-smoke` operation root 数量为 0；全量测试 `356 passed / 0 failed`。

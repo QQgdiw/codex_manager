@@ -1076,7 +1076,7 @@ function Invoke-WithChangeJournalLock {
         -JournalPath $JournalPath `
         -TrustedRoots $TrustedRoots
     $lockPath = $layout.LockPath
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    $deadline = [DateTime]::UtcNow.AddSeconds(120)
     $stream = $null
     try {
         while ($null -eq $stream) {

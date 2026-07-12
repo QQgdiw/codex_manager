@@ -45,9 +45,20 @@ evidence = "local_package_json_sha256"
 
 [tools.stdio]
 command = "node"
-args = ["dist/index.js"]
+args = ["dist/index.js", "E:\\codex"]
 working_directory = "E:\\codex\\MCP\\servers\\src\\filesystem"
 startup_file = "dist/index.js"
+
+[tools.smoke]
+tool_name = "write_file"
+timeout_seconds = 10
+expected_content_types = ["text"]
+script_path = "scripts/smoke/mcp/filesystem.mjs"
+script_sha256 = "3d16a1949cf6613ee4e44651598c725921a4051d6d5a61bba7c1fd3851a82941"
+
+[tools.smoke.arguments]
+path = '${MCP_SMOKE_TEMP_ROOT}\filesystem-write-marker.txt'
+content = "codex-filesystem-mcp-smoke\n"
 
 [[tools]]
 id = "mcp.modelcontextprotocol.memory"

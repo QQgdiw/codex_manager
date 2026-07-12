@@ -1352,6 +1352,61 @@ function New-McpSmokeProcessEnvironment {
     return $environment
 }
 
+function Resolve-McpSmokeArgumentValue {
+    param(
+        [AllowNull()]
+        [object]$Value,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Replacements
+    )
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [string]) {
+        $resolved = [string]$Value
+        foreach ($key in $Replacements.Keys) {
+            $resolved = $resolved.Replace([string]$key, [string]$Replacements[$key])
+        }
+        return $resolved
+    }
+
+    if ($Value.GetType().IsValueType) {
+        return $Value
+    }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        $copy = [ordered]@{}
+        foreach ($key in $Value.Keys) {
+            $copy["$key"] = Resolve-McpSmokeArgumentValue `
+                -Value $Value[$key] `
+                -Replacements $Replacements
+        }
+        return [pscustomobject]$copy
+    }
+
+    if ($Value -is [System.Array] -or
+        ($Value -is [System.Collections.IList] -and $Value -isnot [string])) {
+        return ,(@($Value) | ForEach-Object {
+            Resolve-McpSmokeArgumentValue -Value $_ -Replacements $Replacements
+        })
+    }
+
+    if ($Value -is [System.Management.Automation.PSCustomObject]) {
+        $copy = [ordered]@{}
+        foreach ($property in $Value.PSObject.Properties) {
+            $copy[$property.Name] = Resolve-McpSmokeArgumentValue `
+                -Value $property.Value `
+                -Replacements $Replacements
+        }
+        return [pscustomobject]$copy
+    }
+
+    return $Value
+}
+
 function New-McpSmokeResult {
     param(
         [Parameter(Mandatory = $true)]
@@ -1569,13 +1624,19 @@ function Test-ManagedMcpSmoke {
         $requestPath = Join-Path $operationRoot 'request.json'
         $resultPath = Join-Path $operationRoot 'result.json'
         if ($null -eq $primaryError) {
+            $smokeArguments = Resolve-McpSmokeArgumentValue `
+                -Value $Plan.Arguments `
+                -Replacements @{
+                    '${MCP_SMOKE_TEMP_ROOT}' = $operationRoot
+                    '${MCP_SMOKE_RESULT_PATH}' = $resultPath
+                }
             $request = [ordered]@{
                 sdkClientPath = [string]$Plan.SdkClientPath
                 sdkStdioPath = [string]$Plan.SdkStdioPath
                 command = [string]$Plan.ServerFilePath
                 args = @($Plan.InstallPlan.ResolvedArguments | ForEach-Object { [string]$_ })
                 toolName = [string]$Plan.ToolName
-                arguments = $Plan.Arguments
+                arguments = $smokeArguments
                 timeoutSeconds = [int]$Plan.TimeoutSeconds
             }
             $workingDirectory = Get-McpAdapterString -InputObject $Plan.InstallPlan -Names @('WorkingDirectory', 'working_directory')

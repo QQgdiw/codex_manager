@@ -769,6 +769,46 @@ Describe 'Test-ManagedMcpSmoke' {
         @($script:steps) | Should Be @('prepare', 'runner', 'validate', 'cleanup')
     }
 
+    It 'substitutes operation paths in smoke arguments before runner execution' {
+        $script:smokePlan.Arguments = [pscustomobject]@{
+            path = '${MCP_SMOKE_TEMP_ROOT}\marker.txt'
+            result = '${MCP_SMOKE_RESULT_PATH}'
+            nested = [pscustomobject]@{
+                values = @('${MCP_SMOKE_TEMP_ROOT}', 'static')
+            }
+        }
+        $script:operationRoot = $null
+        $script:request = $null
+
+        $result = Test-ManagedMcpSmoke -Plan $script:smokePlan -Executor {
+            param($Command)
+            $args = @($Command.Arguments)
+            if ($args -contains 'prepare') {
+                $script:operationRoot = $Command.WorkingDirectory
+                return New-SuccessProcessResult -StdOut '{"status":"ok"}'
+            }
+            if ($args[0] -eq $script:smokePlan.RunnerPath) {
+                $script:request = Get-Content -LiteralPath $args[1] -Raw |
+                    ConvertFrom-Json
+                [IO.File]::WriteAllText($args[2], '{"status":"smoke_verified","errorCode":null,"contentTypes":["text"],"isError":false,"residualProcess":false}', $script:utf8NoBom)
+                return New-SuccessProcessResult -StdOut '{"status":"smoke_verified"}'
+            }
+            if ($args -contains 'validate') { return New-SuccessProcessResult -StdOut '{"status":"ok"}' }
+            if ($args -contains 'cleanup') { return New-SuccessProcessResult -StdOut '{"status":"ok"}' }
+            throw 'unexpected command'
+        }
+
+        $result.Status | Should Be 'smoke_verified'
+        $script:request.arguments.path |
+            Should Be (Join-Path $script:operationRoot 'marker.txt')
+        $script:request.arguments.result |
+            Should Be (Join-Path $script:operationRoot 'result.json')
+        @($script:request.arguments.nested.values)[0] |
+            Should Be $script:operationRoot
+        @($script:request.arguments.nested.values)[1] |
+            Should Be 'static'
+    }
+
     It 'runs cleanup after runner failure' {
         $script:cleanupCalled = $false
         $result = Test-ManagedMcpSmoke -Plan $script:smokePlan -Executor {

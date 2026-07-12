@@ -78,3 +78,15 @@
 - [x] Revalidate MCP smoke operation root path and reparse status before recursive deletion.
 - [x] Align MCP smoke plan timeout validation with whitelist schema maximum of 30 seconds.
 - [x] Verification: RED target log captured expected failures; final target passed 54/54; final all passed 355/355; `node --check` and `git diff --check` passed.
+
+## 2026-07-12 Filesystem MCP 受限真实试运行
+
+- [x] 为 `mcp.modelcontextprotocol.filesystem` 增加受限 smoke profile，启动参数固定为 `E:\codex`。
+- [x] 新增 `scripts/smoke/mcp/filesystem.mjs` 生命周期脚本，验证 `write_file` 仅写入 `.tmp\mcp-smoke` operation root。
+- [x] 为 MCP smoke 参数增加 `${MCP_SMOKE_TEMP_ROOT}` 和 `${MCP_SMOKE_RESULT_PATH}` 运行时替换。
+- [x] 完成真实部署：`modelcontextprotocol-filesystem` 已写入用户级 Codex MCP 配置。
+- [x] 完成真实验证：static=`static_verified`，load=`load_verified`，smoke=`smoke_verified`。
+- [x] 完成残留核验：目标 filesystem Node 进程数为 0，`.tmp\mcp-smoke` operation root 数量为 0。
+- [x] 修复 rollback 并发测试在真实机器负载下 30 秒锁等待不足的问题，将等待上限提高到 120 秒。
+- [x] 验证：目标测试通过；最终全量测试 `356 passed / 0 failed`。
+- [ ] 下一步进入文档质量审计与整理阶段，统一当前工程状态和长期维护口径。

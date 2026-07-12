@@ -278,4 +278,25 @@ This file is maintained by `Write-VerificationRecord`.
 - 回滚/卸载：verifier 未执行卸载，也未调用 `codex mcp remove`。
 - 残留：未发现目标 `sequentialthinking\dist\index.js` Node 服务器进程；`.tmp\mcp-smoke` 下 operation 子目录数量为 0。
 - 额外说明：真实配置在验证前已重新部署该 approved MCP，因为当前用户级 Codex MCP 列表中不存在该条目；部署通过管理器执行，未手写 `codex mcp add`。
-- filesystem 后续边界：filesystem MCP 的允许根目录已确认为 `E:\codex`，但尚未部署或执行功能性 smoke。
+- filesystem 后续边界：filesystem MCP 的允许根目录已确认为 `E:\codex`；受限真实试运行结果见下一条记录。
+
+## 验证记录：Filesystem MCP 受限真实试运行
+
+- 工具：Model Context Protocol Filesystem Server
+- 白名单 ID：`mcp.modelcontextprotocol.filesystem`
+- 工具类型：MCP；服务器版本：`0.6.3`
+- 验证时间：`2026-07-12`
+- 启动配置：用户级 Codex MCP，名称为 `modelcontextprotocol-filesystem`
+- 启动命令：`node E:\codex\MCP\servers\src\filesystem\dist\index.js E:\codex`
+- 允许根目录：`E:\codex`
+- 生命周期脚本：`scripts/smoke/mcp/filesystem.mjs`
+- 生命周期脚本 SHA-256：`3d16a1949cf6613ee4e44651598c725921a4051d6d5a61bba7c1fd3851a82941`
+- 自动 smoke 调用工具：`write_file`
+- 自动 smoke 写入范围：仅本次 `.tmp\mcp-smoke\<operation>\filesystem-write-marker.txt`
+- 静态验证：`static_verified`
+- 加载验证：`load_verified`
+- 自动 smoke 验证：`smoke_verified`
+- 综合结论：filesystem MCP 已完成受限真实部署、真实 Codex 配置核验和最小写入 smoke 验证。
+- 回滚/卸载：未执行，因为部署、load 和 smoke 均成功。
+- 残留：目标 filesystem Node 服务器进程数为 0；`.tmp\mcp-smoke` operation 子目录数量为 0；未发现 `filesystem-write-marker.txt` 残留。
+- 额外验证：全量测试 `356 passed / 0 failed`；filesystem MCP 配置参数核验为 `dist/index.js` 绝对路径加 `E:\codex`。

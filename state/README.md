@@ -79,3 +79,12 @@
 - MCP smoke verification now treats an exited server root before cleanup refresh as unverified cleanup and fails instead of reporting `smoke_verified`.
 - MCP smoke operation-root deletion is guarded by a final within-parent and no-reparse check immediately before `Remove-Item -Recurse`.
 - MCP smoke `timeout_seconds` remains aligned to whitelist schema `1..30` when approved snapshots are planned.
+
+## 2026-07-12 Filesystem MCP Pilot
+
+- `mcp.modelcontextprotocol.filesystem` 已完成受限真实部署，用户级 Codex MCP 名称为 `modelcontextprotocol-filesystem`。
+- 真实启动参数为 `node E:\codex\MCP\servers\src\filesystem\dist\index.js E:\codex`，当前允许根目录限定为 `E:\codex`。
+- 自动 smoke 使用 `write_file`，写入目标只允许落在本次 `.tmp\mcp-smoke\<operation>` 临时目录，并由 lifecycle cleanup 清理。
+- 验证结果：static=`static_verified`，load=`load_verified`，smoke=`smoke_verified`。
+- 残留核验：目标 filesystem Node 服务器进程数为 0；`.tmp\mcp-smoke` operation root 数量为 0；未发现 marker 文件残留。
+- 当前工程已到“文档质量审计与整理阶段”前，下一步不应继续扩大工具接入范围，除非用户明确要求跳过文档整理。
