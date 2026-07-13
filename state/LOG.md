@@ -197,3 +197,11 @@
 - PowerShell 外层调用 `-Command` 时，`$r`、`-join " | "` 等片段容易被外层解释或破坏；复杂命令优先写成脚本文件或使用单层、简单输出。
 - 全量测试首次失败在 rollback 并发写入用例：32 个子进程竞争同一 journal lock 时，30 秒等待上限在当前机器负载下会触发 `Change journal is busy.`。将锁等待上限提高到 120 秒后，单项 rollback 集成测试和全量测试均通过。
 - 最终验证：filesystem 真实 verify 结果为 static=`static_verified`、load=`load_verified`、smoke=`smoke_verified`；目标 filesystem Node 进程数为 0；`.tmp\mcp-smoke` operation root 数量为 0；全量测试 `356 passed / 0 failed`。
+
+## 2026-07-13：Plugins 市场资料源核实
+
+- 本机 Codex CLI 版本为 `0.144.1`；`codex plugin list --available --json` 返回 183 个可用插件，其中 `openai-curated` 本地 snapshot 为 179 个。
+- 通过 Codex app-server JSON-RPC `plugin/list` 成功取得 4 个 marketplace、1984 条插件记录，marketplace 加载错误为 0；其中 `openai-curated-remote` 为 1974 条。
+- `metabase@openai-curated-remote` 返回两条不同版本、不同 `remotePluginId` 和不同 availability 的记录，因此原始记录数为 1984，唯一限定 ID 数为 1983。后续采集不得直接按插件 ID 破坏性去重。
+- 已确认 `openai/plugins.git` 和 CLI marketplace snapshot 不能代表 `/plugins` 完整目录。后续以 `plugin/list` 为唯一收录权威，其他仓库只用于补充信息。
+- app-server 接口仍属实验性能力；后续采集器必须执行版本记录、结构校验和失败时不覆盖上一版有效文档的保护。
