@@ -233,6 +233,8 @@ export function collectPluginCatalog({
     let settled = false;
     let buffer = '';
     let initialized = false;
+    let initializeRequestSent = false;
+    let pluginListRequestSent = false;
     const finish = (error, catalog) => {
       if (settled) {
         return;
@@ -253,6 +255,15 @@ export function collectPluginCatalog({
       }
     };
     const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
+    const sendRequest = (message) => {
+      send(message);
+      if (message.id === 1) {
+        initializeRequestSent = true;
+      }
+      if (message.id === 2) {
+        pluginListRequestSent = true;
+      }
+    };
     const timer = setTimeout(() => finish(new Error('plugin_catalog_timeout')), timeoutMs);
 
     try {
@@ -285,6 +296,11 @@ export function collectPluginCatalog({
           if (message.id !== 1 && message.id !== 2) {
             continue;
           }
+          if ((message.id === 1 && !initializeRequestSent)
+            || (message.id === 2 && !pluginListRequestSent)) {
+            finish(new Error(`plugin catalog response received before request ${message.id}`));
+            continue;
+          }
           try {
             validateJsonRpcResponse(message, message.id);
           }
@@ -303,7 +319,7 @@ export function collectPluginCatalog({
             }
             initialized = true;
             send({ method: 'initialized', params: {} });
-            send({ id: 2, method: 'plugin/list', params: { cwds: [cwd] } });
+            sendRequest({ id: 2, method: 'plugin/list', params: { cwds: [cwd] } });
           }
           else if (message.id === 2) {
             if (message.error) {
@@ -320,7 +336,7 @@ export function collectPluginCatalog({
         }
       });
       child.stderr?.resume();
-      send({
+      sendRequest({
         id: 1,
         method: 'initialize',
         params: {

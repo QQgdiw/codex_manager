@@ -123,6 +123,17 @@ async function writeFakeCodex(directory, result) {
   return process.execPath;
 }
 
+async function writeOutOfOrderCodex(directory) {
+  const serverPath = join(directory, 'app-server');
+  const response = {
+    jsonrpc: '2.0',
+    id: 2,
+    result: { marketplaces: [], marketplaceLoadErrors: [] },
+  };
+  await writeFile(serverPath, `console.log(${JSON.stringify(JSON.stringify(response))});\nprocess.stdin.resume();\n`, 'utf8');
+  return process.execPath;
+}
+
 function createFakeChild() {
   return Object.assign(new EventEmitter(), {
     stdin: { write() {}, end() {} },
@@ -296,6 +307,22 @@ test('CLI leaves a previous document untouched after collection failure', async 
   try {
     const outputPath = join(directory, 'plugins_market.md');
     const commandPath = await writeFakeCodex(directory, cloneFixture({ marketplaceLoadErrors: [{ marketplace: 'broken' }] }));
+    await writeFile(outputPath, 'sentinel', 'utf8');
+    const cliPath = join(process.cwd(), 'scripts', 'markets', 'export-plugins-market.mjs');
+    const result = await run(process.execPath, [cliPath, '--cwd', directory, '--output', outputPath, '--codex-command', commandPath]);
+    assert.equal(result.code, 3, result.stderr);
+    assert.equal(await readFile(outputPath, 'utf8'), 'sentinel');
+  }
+  finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('CLI rejects an out-of-order plugin list response without overwriting output', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'plugin-catalog-'));
+  try {
+    const outputPath = join(directory, 'plugins_market.md');
+    const commandPath = await writeOutOfOrderCodex(directory);
     await writeFile(outputPath, 'sentinel', 'utf8');
     const cliPath = join(process.cwd(), 'scripts', 'markets', 'export-plugins-market.mjs');
     const result = await run(process.execPath, [cliPath, '--cwd', directory, '--output', outputPath, '--codex-command', commandPath]);
