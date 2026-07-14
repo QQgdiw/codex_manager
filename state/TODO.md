@@ -1,6 +1,6 @@
 # 项目任务状态
 
-> **更新时间**：2026-07-13
+> **更新时间**：2026-07-14
 
 ## 当前任务：市场文档质量审计与整理
 
@@ -10,6 +10,8 @@
 - [x] 编写 `docs/superpowers/specs/2026-07-13-market-document-quality-audit-design.md`。
 - [x] 用户审阅并确认市场文档质量审计设计说明。
 - [x] 编写详细实施计划 `docs/superpowers/plans/2026-07-14-market-document-quality-audit.md`。
+- [x] Task 1：实现 Plugins 目录采集器和完整性验证器；Node 10/10、Pester unit 308/308 通过。
+- [ ] Task 2：更新正式需求、计划、GUIDE 和旧设计边界。
 - [ ] 执行四份市场文档及相关需求、计划和生成规则的整理。
 - [ ] 完成一致性、来源、状态、去重、中文质量和敏感信息检查。
 

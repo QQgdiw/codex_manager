@@ -213,3 +213,12 @@
 - 执行方式沿用用户此前确认的子代理驱动；子代理不得修改 `state/`，正式文档共享文件由主代理合并，避免并行写入冲突。
 - 市场工具链使用 Node.js 标准库，不增加第三方依赖；PowerShell 5.1 仅保留用于现有 Pester 3.4 测试入口。
 - 用户确认子代理实现提交与主代理状态提交分离。子代理不得修改三个正式状态文件；确需提交状态材料时只能写入 `state/subagents/<task>/`，由主代理汇总。
+
+## 2026-07-14：Task 1 Plugins 目录采集器
+
+- 新增 `scripts/markets/plugin-catalog.mjs` 和 `scripts/markets/export-plugins-market.mjs`，通过 app-server JSON-RPC 采集 `plugin/list`，在完整校验后使用同目录临时文件和 rename 原子更新目标文档。
+- 记录身份使用 marketplace、插件 ID、`remotePluginId`、版本四元组的 SHA-256；相同插件 ID 的不同上游记录不会被破坏性去重。
+- 首轮审查发现匹配 ID 的消息未严格校验 `jsonrpc = 2.0` 和 `result/error` 互斥；修复后增加失败关闭测试。
+- 第二轮审查发现合法 `id: 2` 响应可在 `plugin/list` 请求发出前被接受；修复为显式请求状态机，乱序响应立即失败且不覆盖 sentinel 输出。
+- `--check` 模式已覆盖记录键或数量不一致时退出码 4，且不会改写被检查文档。
+- 最终独立验证：两个 `node --check` 退出 0；Node 测试 10 passed / 0 failed；Pester unit 308 passed / 0 failed。真实账户目录生成保留到 Task 3 执行。
