@@ -123,6 +123,30 @@ async function writeFakeCodex(directory, result) {
   return process.execPath;
 }
 
+async function writeFakeCodexCmdShim(directory, result) {
+  const serverPath = join(directory, 'app-server');
+  const commandPath = join(directory, 'codex.cmd');
+  const server = [
+    "let input = '';",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', (chunk) => {",
+    "  input += chunk;",
+    "  const lines = input.split('\\n');",
+    "  input = lines.pop();",
+    "  for (const line of lines) {",
+    "    if (!line.trim()) continue;",
+    "    const message = JSON.parse(line);",
+    "    if (message.method === 'initialize') console.log(JSON.stringify({ id: 1, result: { serverInfo: { name: 'fake' } } }));",
+    "    if (message.method === 'plugin/list') console.log(JSON.stringify({ id: 2, result: " + JSON.stringify(result) + " }));",
+    "  }",
+    "});",
+  ].join('\n');
+
+  await writeFile(serverPath, server, 'utf8');
+  await writeFile(commandPath, `@echo off\r\n"${process.execPath}" "%~dp0app-server" %*\r\n`, 'utf8');
+  return commandPath;
+}
+
 async function writeOutOfOrderCodex(directory) {
   const serverPath = join(directory, 'app-server');
   const response = {
@@ -272,34 +296,51 @@ test('rejects invalid JSON and timeout from the app server', async () => {
 });
 
 test('rejects matching responses that violate the JSON-RPC response contract', async () => {
-  const initializeResponse = { jsonrpc: '2.0', id: 1, result: { serverInfo: { name: 'fake' } } };
+  const initializeResponse = { id: 1, result: { serverInfo: { name: 'fake' } } };
   const emptyCatalog = { marketplaces: [], marketplaceLoadErrors: [] };
   await assert.rejects(
-    () => collectFromResponses({ id: 1, result: { serverInfo: { name: 'fake' } } }, { jsonrpc: '2.0', id: 2, result: emptyCatalog }),
+    () => collectFromResponses({ jsonrpc: '1.0', id: 1, result: { serverInfo: { name: 'fake' } } }, { id: 2, result: emptyCatalog }),
     /invalid JSON-RPC response/i,
   );
   await assert.rejects(
-    () => collectFromResponses(initializeResponse, { id: 2, result: emptyCatalog }),
+    () => collectFromResponses(initializeResponse, { jsonrpc: '1.0', id: 2, result: emptyCatalog }),
     /invalid JSON-RPC response/i,
   );
   await assert.rejects(
-    () => collectFromResponses(initializeResponse, { jsonrpc: '2.0', id: 2 }),
+    () => collectFromResponses(initializeResponse, { id: 2 }),
     /invalid JSON-RPC response/i,
   );
   await assert.rejects(
     () => collectFromResponses(initializeResponse, {
-      jsonrpc: '2.0', id: 2, result: emptyCatalog, error: { code: -32000, message: 'failed' },
+      id: 2, result: emptyCatalog, error: { code: -32000, message: 'failed' },
     }),
     /invalid JSON-RPC response/i,
   );
   await assert.rejects(
-    () => collectFromResponses(initializeResponse, { jsonrpc: '2.0', id: 2, error: { code: -32000, message: 'failed' } }),
+    () => collectFromResponses(initializeResponse, { id: 2, error: { code: -32000, message: 'failed' } }),
     /plugin\/list failed/i,
   );
   await assert.rejects(
-    () => collectFromResponses(initializeResponse, { jsonrpc: '2.0', id: 2, result: [] }),
+    () => collectFromResponses(initializeResponse, { id: 2, error: { code: '-32000', message: 'failed' } }),
+    /invalid JSON-RPC response/i,
+  );
+  await assert.rejects(
+    () => collectFromResponses(initializeResponse, { id: 2, error: { code: -32000 } }),
+    /invalid JSON-RPC response/i,
+  );
+  await assert.rejects(
+    () => collectFromResponses(initializeResponse, { id: 2, result: [] }),
     /plugin\/list result is invalid/i,
   );
+});
+
+test('accepts Codex response envelopes that omit jsonrpc', async () => {
+  const emptyCatalog = { marketplaces: [], marketplaceLoadErrors: [] };
+  const catalog = await collectFromResponses(
+    { id: 1, result: { serverInfo: { name: 'fake' } } },
+    { id: 2, result: emptyCatalog },
+  );
+  assert.deepEqual(catalog, validatePluginListResult(emptyCatalog));
 });
 
 test('CLI leaves a previous document untouched after collection failure', async () => {
@@ -316,6 +357,64 @@ test('CLI leaves a previous document untouched after collection failure', async 
   finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('CLI runs a Windows cmd shim app server as a real child process', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'plugin-catalog-'));
+  try {
+    const outputPath = join(directory, 'plugins_market.md');
+    const commandPath = await writeFakeCodexCmdShim(directory, fixtureResult);
+    const cliPath = join(process.cwd(), 'scripts', 'markets', 'export-plugins-market.mjs');
+    const result = await run(process.execPath, [cliPath, '--cwd', directory, '--output', outputPath, '--codex-command', commandPath]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(await readFile(outputPath, 'utf8'), /原始记录数：3/);
+  }
+  finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('uses the configured ComSpec shell for Windows cmd shims', async () => {
+  if (process.platform !== 'win32') {
+    return;
+  }
+  const child = createFakeChild();
+  let received;
+  const catalog = await collectPluginCatalog({
+    codexCommand: 'C:/fixture/codex.cmd',
+    cwd: 'C:/fixture',
+    spawnImpl(command, args, options) {
+      received = { command, args, options };
+      queueMicrotask(() => {
+        child.stdout.write(`${JSON.stringify({ id: 1, result: {} })}\n`);
+        child.stdout.write(`${JSON.stringify({ id: 2, result: { marketplaces: [], marketplaceLoadErrors: [] } })}\n`);
+      });
+      return child;
+    },
+  });
+  assert.equal(received.command, 'C:/fixture/codex.cmd');
+  assert.deepEqual(received.args, ['app-server', '--stdio']);
+  assert.equal(received.options.shell, process.env.ComSpec ?? 'cmd.exe');
+  assert.deepEqual(catalog, validatePluginListResult({ marketplaces: [], marketplaceLoadErrors: [] }));
+});
+
+test('rejects PowerShell commands instead of treating them as native executables', async () => {
+  if (process.platform !== 'win32') {
+    return;
+  }
+  let spawned = false;
+  await assert.rejects(
+    () => collectPluginCatalog({
+      codexCommand: 'C:/fixture/codex.ps1',
+      cwd: 'C:/fixture',
+      spawnImpl() {
+        spawned = true;
+        return createFakeChild();
+      },
+    }),
+    /PowerShell commands are not supported/i,
+  );
+  assert.equal(spawned, false);
 });
 
 test('CLI rejects an out-of-order plugin list response without overwriting output', async () => {

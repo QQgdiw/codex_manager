@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { extname } from 'node:path';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const APP_SERVER_ARGS = Object.freeze(['app-server', '--stdio']);
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -12,7 +14,7 @@ function hasOwn(value, property) {
 }
 
 function validateJsonRpcResponse(message, requestId) {
-  if (message.jsonrpc !== '2.0') {
+  if (hasOwn(message, 'jsonrpc') && message.jsonrpc !== '2.0') {
     throw new Error(`invalid JSON-RPC response for request ${requestId}`);
   }
   const hasResult = hasOwn(message, 'result');
@@ -20,10 +22,33 @@ function validateJsonRpcResponse(message, requestId) {
   if (hasResult === hasError) {
     throw new Error(`invalid JSON-RPC response for request ${requestId}`);
   }
-  if (hasError && !isObject(message.error)) {
-    throw new Error(`invalid JSON-RPC response for request ${requestId}`);
+  if (hasError) {
+    const error = message.error;
+    if (!isObject(error) || !Number.isInteger(error.code) || typeof error.message !== 'string') {
+      throw new Error(`invalid JSON-RPC response for request ${requestId}`);
+    }
   }
   return message;
+}
+
+function codexSpawnOptions(codexCommand, cwd) {
+  const options = {
+    cwd,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  };
+  if (process.platform !== 'win32') {
+    return options;
+  }
+
+  const extension = extname(codexCommand).toLowerCase();
+  if (extension === '.ps1') {
+    throw new Error('PowerShell commands are not supported for the Codex app server');
+  }
+  if (codexCommand === 'codex' || extension === '.cmd' || extension === '.bat') {
+    return { ...options, shell: process.env.ComSpec ?? 'cmd.exe' };
+  }
+  return options;
 }
 
 function marketplaceNameOf(marketplace) {
@@ -267,11 +292,7 @@ export function collectPluginCatalog({
     const timer = setTimeout(() => finish(new Error('plugin_catalog_timeout')), timeoutMs);
 
     try {
-      child = spawnImpl(codexCommand, ['app-server', '--stdio'], {
-        cwd,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-      });
+      child = spawnImpl(codexCommand, APP_SERVER_ARGS, codexSpawnOptions(codexCommand, cwd));
       child.once('error', (error) => finish(error));
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk) => {
