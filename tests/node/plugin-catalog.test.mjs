@@ -102,8 +102,7 @@ async function run(command, args, options = {}) {
 }
 
 async function writeFakeCodex(directory, result) {
-  const serverPath = join(directory, 'fake-app-server.mjs');
-  const commandPath = join(directory, 'fake-codex.cmd');
+  const serverPath = join(directory, 'app-server');
   const server = [
     "let input = '';",
     "process.stdin.setEncoding('utf8');",
@@ -121,8 +120,33 @@ async function writeFakeCodex(directory, result) {
   ].join('\n');
 
   await writeFile(serverPath, server, 'utf8');
-  await writeFile(commandPath, `@echo off\r\n"${process.execPath}" "${serverPath}" %*\r\n`, 'utf8');
-  return commandPath;
+  return process.execPath;
+}
+
+function createFakeChild() {
+  return Object.assign(new EventEmitter(), {
+    stdin: { write() {}, end() {} },
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    killed: false,
+    kill() { this.killed = true; },
+  });
+}
+
+function collectFromResponses(initializeResponse, pluginListResponse) {
+  const child = createFakeChild();
+  return collectPluginCatalog({
+    codexCommand: 'codex',
+    cwd: 'E:/fixture',
+    timeoutMs: 100,
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.write(`${JSON.stringify(initializeResponse)}\n`);
+        child.stdout.write(`${JSON.stringify(pluginListResponse)}\n`);
+      });
+      return child;
+    },
+  });
 }
 
 test('preserves upstream duplicate ids as distinct records', () => {
@@ -236,6 +260,37 @@ test('rejects invalid JSON and timeout from the app server', async () => {
   );
 });
 
+test('rejects matching responses that violate the JSON-RPC response contract', async () => {
+  const initializeResponse = { jsonrpc: '2.0', id: 1, result: { serverInfo: { name: 'fake' } } };
+  const emptyCatalog = { marketplaces: [], marketplaceLoadErrors: [] };
+  await assert.rejects(
+    () => collectFromResponses({ id: 1, result: { serverInfo: { name: 'fake' } } }, { jsonrpc: '2.0', id: 2, result: emptyCatalog }),
+    /invalid JSON-RPC response/i,
+  );
+  await assert.rejects(
+    () => collectFromResponses(initializeResponse, { id: 2, result: emptyCatalog }),
+    /invalid JSON-RPC response/i,
+  );
+  await assert.rejects(
+    () => collectFromResponses(initializeResponse, { jsonrpc: '2.0', id: 2 }),
+    /invalid JSON-RPC response/i,
+  );
+  await assert.rejects(
+    () => collectFromResponses(initializeResponse, {
+      jsonrpc: '2.0', id: 2, result: emptyCatalog, error: { code: -32000, message: 'failed' },
+    }),
+    /invalid JSON-RPC response/i,
+  );
+  await assert.rejects(
+    () => collectFromResponses(initializeResponse, { jsonrpc: '2.0', id: 2, error: { code: -32000, message: 'failed' } }),
+    /plugin\/list failed/i,
+  );
+  await assert.rejects(
+    () => collectFromResponses(initializeResponse, { jsonrpc: '2.0', id: 2, result: [] }),
+    /plugin\/list result is invalid/i,
+  );
+});
+
 test('CLI leaves a previous document untouched after collection failure', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'plugin-catalog-'));
   try {
@@ -246,6 +301,31 @@ test('CLI leaves a previous document untouched after collection failure', async 
     const result = await run(process.execPath, [cliPath, '--cwd', directory, '--output', outputPath, '--codex-command', commandPath]);
     assert.equal(result.code, 3, result.stderr);
     assert.equal(await readFile(outputPath, 'utf8'), 'sentinel');
+  }
+  finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('CLI check mode rejects an inconsistent document without modifying it', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'plugin-catalog-'));
+  try {
+    const checkPath = join(directory, 'plugins_market.md');
+    const outputPath = join(directory, 'must-not-be-written.md');
+    const commandPath = await writeFakeCodex(directory, fixtureResult);
+    const firstKey = pluginRecordKey('openai-curated-remote', fixtureResult.marketplaces[0].plugins[0]);
+    const sentinel = `<!-- plugin-record:${firstKey} -->\n`;
+    await writeFile(checkPath, sentinel, 'utf8');
+    const cliPath = join(process.cwd(), 'scripts', 'markets', 'export-plugins-market.mjs');
+    const result = await run(process.execPath, [
+      cliPath,
+      '--cwd', directory,
+      '--output', outputPath,
+      '--check', checkPath,
+      '--codex-command', commandPath,
+    ]);
+    assert.equal(result.code, 4, result.stderr);
+    assert.equal(await readFile(checkPath, 'utf8'), sentinel);
   }
   finally {
     await rm(directory, { recursive: true, force: true });

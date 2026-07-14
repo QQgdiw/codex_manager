@@ -7,6 +7,25 @@ function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function hasOwn(value, property) {
+  return Object.prototype.hasOwnProperty.call(value, property);
+}
+
+function validateJsonRpcResponse(message, requestId) {
+  if (message.jsonrpc !== '2.0') {
+    throw new Error(`invalid JSON-RPC response for request ${requestId}`);
+  }
+  const hasResult = hasOwn(message, 'result');
+  const hasError = hasOwn(message, 'error');
+  if (hasResult === hasError) {
+    throw new Error(`invalid JSON-RPC response for request ${requestId}`);
+  }
+  if (hasError && !isObject(message.error)) {
+    throw new Error(`invalid JSON-RPC response for request ${requestId}`);
+  }
+  return message;
+}
+
 function marketplaceNameOf(marketplace) {
   if (!isObject(marketplace)) {
     return undefined;
@@ -263,9 +282,23 @@ export function collectPluginCatalog({
           if (!isObject(message)) {
             continue;
           }
+          if (message.id !== 1 && message.id !== 2) {
+            continue;
+          }
+          try {
+            validateJsonRpcResponse(message, message.id);
+          }
+          catch (error) {
+            finish(error);
+            continue;
+          }
           if (message.id === 1 && !initialized) {
             if (message.error) {
               finish(new Error('plugin catalog initialize failed'));
+              continue;
+            }
+            if (!isObject(message.result)) {
+              finish(new Error('invalid JSON-RPC response for request 1'));
               continue;
             }
             initialized = true;
@@ -280,8 +313,8 @@ export function collectPluginCatalog({
             try {
               finish(null, validatePluginListResult(message.result));
             }
-            catch (error) {
-              finish(error);
+            catch {
+              finish(new Error('plugin catalog plugin/list result is invalid'));
             }
           }
         }
