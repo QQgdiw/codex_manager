@@ -17,6 +17,7 @@ coverage/
 TestResults/
 .state/journals/
 .tmp/
+.superpowers/
 
 # Python caches
 __pycache__/
