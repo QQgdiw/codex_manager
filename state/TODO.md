@@ -8,8 +8,8 @@
 - [x] 通过 Codex app-server `plugin/list` 复现 1984 条插件记录，并确认 1 组上游重复限定 ID。
 - [x] 明确四份市场文档的收录权威、补充来源和运行状态来源。
 - [x] 编写 `docs/superpowers/specs/2026-07-13-market-document-quality-audit-design.md`。
-- [ ] 用户审阅并确认市场文档质量审计设计说明。
-- [ ] 编写详细实施计划。
+- [x] 用户审阅并确认市场文档质量审计设计说明。
+- [x] 编写详细实施计划 `docs/superpowers/plans/2026-07-14-market-document-quality-audit.md`。
 - [ ] 执行四份市场文档及相关需求、计划和生成规则的整理。
 - [ ] 完成一致性、来源、状态、去重、中文质量和敏感信息检查。
 

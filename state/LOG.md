@@ -205,3 +205,10 @@
 - `metabase@openai-curated-remote` 返回两条不同版本、不同 `remotePluginId` 和不同 availability 的记录，因此原始记录数为 1984，唯一限定 ID 数为 1983。后续采集不得直接按插件 ID 破坏性去重。
 - 已确认 `openai/plugins.git` 和 CLI marketplace snapshot 不能代表 `/plugins` 完整目录。后续以 `plugin/list` 为唯一收录权威，其他仓库只用于补充信息。
 - app-server 接口仍属实验性能力；后续采集器必须执行版本记录、结构校验和失败时不覆盖上一版有效文档的保护。
+
+## 2026-07-14：市场文档质量审计实施计划
+
+- 用户已审阅并确认市场文档质量审计设计，无需继续澄清设计边界。
+- 实施计划拆分为 Plugins 采集器、需求口径、完整插件目录、GitHub 工具链、GitHub 文档、MCP/工具派生文档和最终跨文档审计七个任务。
+- 执行方式沿用用户此前确认的子代理驱动；子代理不得修改 `state/`，正式文档共享文件由主代理合并，避免并行写入冲突。
+- 市场工具链使用 Node.js 标准库，不增加第三方依赖；PowerShell 5.1 仅保留用于现有 Pester 3.4 测试入口。
