@@ -1,5 +1,7 @@
 # Market Approval Hardening Implementation Plan
 
+> **已被 2026-07-13 设计取代：** 本文件仅保留历史实施计划，不得继续按其中的 Plugins 来源或执行步骤实施。当前设计见 [市场文档质量审计与整理设计](../specs/2026-07-13-market-document-quality-audit-design.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Strengthen Phase 1 market intelligence and approval review artifacts so the user can make informed whitelist decisions and future UI/MCP automation can consume structured TOML review data.

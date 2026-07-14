@@ -23,6 +23,17 @@
 
 ## 推荐下一步
 
+## 按需更新 Plugins 市场
+
+需要更新 `Resources/plugins_market.md` 时，在工作区根目录运行：
+
+```powershell
+node .\scripts\markets\export-plugins-market.mjs --cwd (Resolve-Path .).Path --output .\Resources\plugins_market.md
+node .\scripts\markets\export-plugins-market.mjs --cwd (Resolve-Path .).Path --check .\Resources\plugins_market.md
+```
+
+两个命令均以退出码 `0` 结束，且文档中的采集摘要没有 marketplace 加载异常时，才表示本次更新和一致性检查成功。命令失败时，采集器会保留上一版有效文档；不要手动使用旧 GitHub 仓库、CLI snapshot 或本地缓存补齐完整清单。无需提供 `auth.json` 正文、Token、Cookie 或任何其他凭据内容。
+
 sequential-thinking MCP 的自动化 smoke verifier 已接入并通过真实验证。filesystem MCP 也已完成受限真实试运行，当前边界为：
 
 - 允许根目录：`E:\codex`

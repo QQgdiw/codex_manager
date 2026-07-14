@@ -1,5 +1,7 @@
 # Market And Approval Hardening Design
 
+> **已被 2026-07-13 设计取代：** 本文件仅保留历史设计记录，不得继续按其中的 Plugins 来源或执行步骤实施。当前设计见 [市场文档质量审计与整理设计](2026-07-13-market-document-quality-audit-design.md)。
+
 ## Background
 
 Phase 1 established the minimum closed loop for market documents, whitelist approval, scenario configs, deployment dry-run, static verification, rollback records, and credential boundaries. The remaining quality gap is not the automation core; it is the breadth and usability of the market intelligence and approval workflow.

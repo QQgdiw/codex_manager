@@ -721,22 +721,35 @@ git commit -m "feat[cli]: add PowerShell management entry point"
 ### Task 12: 填充 Plugins 市场
 
 **Files:**
-- Create: `Resources/plugins_market.md`
-- Modify: `Resources/tool_whitelist.toml`
+- Modify: `Resources/plugins_market.md`
 
-- [ ] **Step 1: 固定 OpenAI Plugins 仓库 Commit**
-- [ ] **Step 2: 枚举插件目录并收集官方名称、描述、功能和部署条件**
-- [ ] **Step 3: 按“宽进严标”排除明显无关项**
-- [ ] **Step 4: 记录来源、采集时间、Commit、相关度、成熟度和风险**
-- [ ] **Step 5: 对建议白名单项生成 `proposed` 条目，不自动批准**
-- [ ] **Step 6: 检查每个插件条目都有官方来源和 AI 调用参考**
-- [ ] **Step 7: 提交**
+`plugin/list` 是 Plugins 市场的唯一收录权威。当前任务只在用户发出更新指令时执行，不创建定时任务；不得以 `openai/plugins.git`、`codex plugin list` 或本地 marketplace snapshot 作为完整清单。
 
-该任务只在用户发出更新指令时执行，后续更新必须增量合并并保留历史状态，不创建定时任务。
+- [ ] **Step 1: 将当前工作区的绝对路径传给采集器，并输出到临时候选文件**
 
 ```powershell
-git add Resources\plugins_market.md Resources\tool_whitelist.toml
-git commit -m "docs[market]: add initial OpenAI plugin catalog"
+node .\scripts\markets\export-plugins-market.mjs --cwd (Resolve-Path .).Path --output .\.tmp\plugins_market.candidate.md
+```
+
+- [ ] **Step 2: 审阅候选文件的采集摘要、marketplace 加载异常、原始记录数和研发者重点索引；确认完整清单保留全部记录和原始重复。**
+- [ ] **Step 3: 仅在采集与完整性校验成功后，运行采集器原子更新正式文档。失败时保留上一版，不以旧仓库、CLI snapshot 或缓存补齐。**
+
+```powershell
+node .\scripts\markets\export-plugins-market.mjs --cwd (Resolve-Path .).Path --output .\Resources\plugins_market.md
+```
+
+- [ ] **Step 4: 对正式文档执行只读一致性检查。**
+
+```powershell
+node .\scripts\markets\export-plugins-market.mjs --cwd (Resolve-Path .).Path --check .\Resources\plugins_market.md
+```
+
+- [ ] **Step 5: 复核重点索引仅影响阅读优先级，不改变完整清单；记录异常、状态和更新结论。**
+- [ ] **Step 6: 更新状态记录并提交。**
+
+```powershell
+git add Resources\plugins_market.md state\README.md state\TODO.md state\LOG.md
+git commit -m "docs[market]: update plugin catalog"
 ```
 
 ### Task 13: 回溯并填充 GitHub 周榜
