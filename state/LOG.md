@@ -222,3 +222,11 @@
 - 第二轮审查发现合法 `id: 2` 响应可在 `plugin/list` 请求发出前被接受；修复为显式请求状态机，乱序响应立即失败且不覆盖 sentinel 输出。
 - `--check` 模式已覆盖记录键或数量不一致时退出码 4，且不会改写被检查文档。
 - 最终独立验证：两个 `node --check` 退出 0；Node 测试 10 passed / 0 failed；Pester unit 308 passed / 0 failed。真实账户目录生成保留到 Task 3 执行。
+
+## 2026-07-14：Task 2 Plugins 资料源合同
+
+- `Resources/PRD.md` 已将 app-server `plugin/list` 定义为唯一完整清单来源；所有返回记录进入完整清单，研发相关性只影响重点索引，并明确账户/工作区可见性、原始重复保留和失败不覆盖。
+- `Resources/PP.md` 已用 Task 1 采集器的候选输出、正式输出和 `--check` 命令替代旧仓库克隆步骤；`Resources/GUIDE.md` 增加按需更新步骤并明确无需提供 `auth.json` 正文。
+- 两份 2026-06-25 历史设计/计划仅增加被新设计取代的提示，历史正文未改写。
+- 首轮审查发现合同测试只匹配孤立关键词，不能阻止旧来源回退。修复后，同一验证器既检查真实文档，也检查故意违规的内存样本。
+- 独立验证：违规探针按预期退出 1，并指出 `codex plugin list` 完整目录替代违规；正常 Pester unit 为 310 passed / 0 failed。
