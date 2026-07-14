@@ -17,9 +17,9 @@
 - Plugins 清单不得使用 `openai/plugins.git`、`codex plugin list` 或本地缓存替代 `plugin/list`。
 - `plugin/list` 失败、marketplace 加载错误、schema 不兼容或完整性校验失败时，不得覆盖上一版有效文档。
 - GitHub 项目必须满足采集时 `stars >= 1000`，同一规范化 `owner/name` 不得跨周重复，不得为凑够数量降低标准。
-- 子代理只读 `state/README.md`、`state/TODO.md`、`state/LOG.md`；状态文件只能由主代理修改。
+- 子代理只读 `state/README.md`、`state/TODO.md`、`state/LOG.md`；确需提交状态材料时只能写入 `state/subagents/<task>/`。正式三个状态文件只能由主代理修改。
 - 子代理不得同时编辑同一文件；并行审阅结果写入各自独立的 `.tmp/market-audit/` 文件，由主代理合并。
-- 每个任务完成后先进行需求符合性审查，再进行代码或文档质量审查；两轮通过后才能提交。
+- 实现子代理先提交任务代码，再进行需求符合性和代码/文档质量审查；两轮通过后，主代理单独提交正式状态文件更新。
 - Commit Message 使用 `<type>[scope]: <description>`；没有对应 GitHub Issue 时不得编造 `Fixes #...` 页脚。
 
 ---
@@ -158,14 +158,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Run-Tests.ps1 -U
 
 Expected: 两个 `node --check` 退出 0；Node 测试 0 failed；Pester unit 0 failed。
 
-- [ ] **Step 10：主代理更新状态并提交**
+- [ ] **Step 10：实现子代理提交任务代码，主代理审查后单独提交状态**
 
-子代理不得编辑 `state/`。两轮审查通过后，主代理更新当前任务进度并提交：
+子代理提交任务代码，不包含正式状态文件：
 
 ```powershell
-git add scripts/markets/plugin-catalog.mjs scripts/markets/export-plugins-market.mjs tests/node/plugin-catalog.test.mjs tests/unit/MarketScripts.Tests.ps1 state/README.md state/TODO.md state/LOG.md
+git add scripts/markets/plugin-catalog.mjs scripts/markets/export-plugins-market.mjs tests/node/plugin-catalog.test.mjs tests/unit/MarketScripts.Tests.ps1
 git commit -m "feat[market]: add plugin catalog collector"
 ```
+
+两轮审查通过后，主代理更新并单独提交 `state/README.md`、`state/TODO.md`、`state/LOG.md`。
 
 ---
 
@@ -225,12 +227,14 @@ git diff --check
 
 Expected: unit 0 failed；`rg` 只允许出现在历史说明或“不得作为完整清单”的否定语境；`git diff --check` 退出 0。
 
-- [ ] **Step 8：主代理更新状态并提交**
+- [ ] **Step 8：实现子代理提交文档，主代理审查后单独提交状态**
 
 ```powershell
-git add Resources/PRD.md Resources/PP.md Resources/GUIDE.md docs/superpowers/specs/2026-06-25-market-approval-hardening-design.md docs/superpowers/plans/2026-06-25-market-approval-hardening.md tests/unit/MarketScripts.Tests.ps1 state/README.md state/TODO.md state/LOG.md
+git add Resources/PRD.md Resources/PP.md Resources/GUIDE.md docs/superpowers/specs/2026-06-25-market-approval-hardening-design.md docs/superpowers/plans/2026-06-25-market-approval-hardening.md tests/unit/MarketScripts.Tests.ps1
 git commit -m "docs[requirements]: update plugin market authority"
 ```
+
+两轮审查通过后，主代理单独提交正式状态文件更新。
 
 ---
 
@@ -279,9 +283,11 @@ Expected: 两条命令均退出 0；检查报告记录数和记录键集合一�
 - [ ] **Step 6：提交**
 
 ```powershell
-git add Resources/plugins_market.md state/README.md state/TODO.md state/LOG.md
+git add Resources/plugins_market.md
 git commit -m "docs[market]: rebuild complete plugin catalog"
 ```
+
+两轮审查通过后，主代理单独提交正式状态文件更新。
 
 ---
 
@@ -328,12 +334,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Run-Tests.ps1 -U
 
 Expected: 0 failed。
 
-- [ ] **Step 6：主代理更新状态并提交**
+- [ ] **Step 6：实现子代理提交任务代码，主代理审查后单独提交状态**
 
 ```powershell
-git add scripts/markets/github-market.mjs tests/node/github-market.test.mjs tests/unit/MarketScripts.Tests.ps1 state/README.md state/TODO.md state/LOG.md
+git add scripts/markets/github-market.mjs tests/node/github-market.test.mjs tests/unit/MarketScripts.Tests.ps1
 git commit -m "feat[market]: add github market validation"
 ```
+
+两轮审查通过后，主代理单独提交正式状态文件更新。
 
 ---
 
@@ -380,9 +388,11 @@ Expected: stars 硬错误 0、跨周重复 0、非法记录 0；不足 20 条的
 - [ ] **Step 7：提交**
 
 ```powershell
-git add Resources/github_market.md state/README.md state/TODO.md state/LOG.md
+git add Resources/github_market.md
 git commit -m "docs[market]: curate github engineering archive"
 ```
+
+两轮审查通过后，主代理单独提交正式状态文件更新。
 
 ---
 
@@ -425,9 +435,11 @@ Expected: 派生缺失 0、跨文档分类冲突 0、GitHub 硬错误 0。
 - [ ] **Step 6：提交**
 
 ```powershell
-git add Resources/MCP_market.md Resources/tool_market.md state/README.md state/TODO.md state/LOG.md
+git add Resources/MCP_market.md Resources/tool_market.md
 git commit -m "docs[market]: rebuild derived tool catalogs"
 ```
+
+两轮审查通过后，主代理单独提交正式状态文件更新。
 
 ---
 
@@ -511,12 +523,12 @@ Expected: push 成功；本地分支与远端同步；工作树干净。
 
 每个实现任务采用以下固定顺序：
 
-1. 实现子代理读取设计、当前任务和相关文件，完成实现及目标测试，不修改 `state/`。
+1. 实现子代理读取设计、当前任务和相关文件，完成实现、目标测试和任务代码提交，不修改三个正式状态文件；确需状态交接时只能写入 `state/subagents/<task>/`。
 2. 需求审查子代理只判断是否完整符合设计和任务，不进行风格扩展。
 3. 若需求审查失败，原实现子代理修复后重新审查。
 4. 质量审查子代理检查正确性、错误边界、测试充分性、文档事实和可维护性。
 5. 若质量审查失败，原实现子代理修复后重新审查。
-6. 主代理独立运行验证、更新 `state/`、提交并关闭全部子代理。
+6. 主代理独立运行验证、更新三个正式状态文件并单独提交，然后关闭全部子代理。
 
 ## 完成判据
 
