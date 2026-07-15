@@ -284,8 +284,17 @@ test('preserves upstream duplicate ids as distinct records', () => {
   const catalog = validatePluginListResult(fixtureResult);
   assert.equal(catalog.records.length, 3);
   assert.equal(new Set(catalog.records.map((record) => record.recordKey)).size, 3);
-  assert.match(renderPluginsMarket(catalog, metadata), /原始记录数：3/);
-  assert.equal((renderPluginsMarket(catalog, metadata).match(/<!-- plugin-record:/g) ?? []).length, 3);
+  const document = renderPluginsMarket(catalog, metadata);
+  const focusedIndex = document.split('## 完整清单')[0];
+
+  assert.match(document, /原始记录数：3/);
+  assert.equal((document.match(/<!-- plugin-record:/g) ?? []).length, 3);
+  for (const record of catalog.records.filter((item) => item.id === 'metabase')) {
+    assert.match(
+      focusedIndex,
+      new RegExp(`- .*（metabase，${record.marketplaceName}），recordKey：${record.recordKey}`),
+    );
+  }
 });
 
 test('renders nested plugin interface metadata and assigns each focused record once', () => {
