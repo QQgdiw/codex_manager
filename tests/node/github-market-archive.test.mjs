@@ -119,6 +119,18 @@ test('renders W29 as a partial week with complete Chinese fields and a valid git
   assert.deepEqual(validation.errors, []);
 });
 
+test('renders a partial week even when it has no candidates', () => {
+  const document = renderGitHubMarketArchive({
+    records: [],
+    capturedAt: '2026-07-15T10:30:00.000Z',
+    partialWeeks: ['2026-W29'],
+  });
+
+  assert.match(document, /### 2026-W29/);
+  assert.match(document, /- 原始候选：0/);
+  assert.match(document, /截至采集日的部分周数据/);
+});
+
 test('does not overwrite an existing render target when atomic rename fails', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'github-market-archive-'));
   try {

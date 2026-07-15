@@ -59,7 +59,7 @@ export function validateCurationRecords(records) {
 function marker(record, capturedAt) { return `<!-- github-record:${JSON.stringify({ week: record.week, repository: record.repository, stars: record.stars, capturedAt, sourceLevel: record.sourceLevel })} -->`; }
 export function renderGitHubMarketArchive({ records, capturedAt, partialWeeks = [] }) {
   const checked = validateCurationRecords(records); if (checked.errors.length) throw new Error(checked.errors.join('\n'));
-  const weeks = [...new Set(records.map((record) => record.week))].sort().reverse();
+  const weeks = [...new Set([...records.map((record) => record.week), ...partialWeeks])].sort().reverse();
   const lines = ['# GitHub 研发项目市场', '', `> 采集与审阅时间：${capturedAt}`, '> 历史候选为近似回溯，不代表对应周的精确 Trending 排名或历史 Star。', ''];
   for (const week of weeks) {
     const all = records.filter((record) => record.week === week); const keep = checked.kept.filter((record) => record.week === week);
