@@ -1,6 +1,8 @@
 # Codex 工具资源管理与自动部署 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **文档性质：** 第 1-11 节保留计划编制时的环境基线和实施步骤，不代表当前运行状态。当前事实以 `Resources/GUIDE.md`、四份市场文档和 `state/` 为准；发生冲突时，以日期更晚、证据等级更高的记录为准。
 
 **Goal:** 在当前 Windows 工作区中建立资源调研、白名单审批、场景配置生成、自动部署、分层验证、失败回滚和凭据保护的首期闭环。
 
@@ -33,10 +35,10 @@
 
 当前不需要额外安装 Plugin、MCP 或 Skill。
 
-### 2.2 已发现的环境事实
+### 2.2 计划编制时已发现的环境事实
 
-- `codex plugin list` 当前返回无 marketplace plugin。
-- `codex mcp list` 当前返回无已配置 MCP。
+- 计划编制时（2026-06-13），`codex plugin list` 返回无 marketplace plugin；该 CLI snapshot 不能代表后续 app-server `plugin/list` 完整目录。
+- 计划编制时（2026-06-13），`codex mcp list` 返回无已配置 MCP；后续部署和验证历史及当前注册状态以 `MCP_market.md` 为准。
 - 根目录 `config.toml` 不是当前 Codex CLI 自动识别的项目配置位置，不能视为已经生效。
 - `MCP/servers` 和 `Skills/AgentSkillsforContextEngineering` 已有源码，但它们是嵌套 Git 仓库，且未在当前 Codex 配置中启用。
 - Puppeteer MCP 的预期 `dist/index.js` 不存在，不能标记为可用。
@@ -51,7 +53,7 @@
 
 1. Codex 认证：复用用户级 `C:\Users\86178\.codex\auth.json`，不得复制到仓库、读取正文或写入日志；若未来失效，再由用户执行 `codex login`。
 2. 用户级 Plugin 安装：写入用户 Codex 配置和缓存时申请工作区外写权限。
-3. 联网下载：用户已同意自动执行。由于当前环境按命令前缀控制网络，首次出现 `git clone/fetch`、`npm install`、`uv sync`、`pip install`、`codex plugin marketplace add` 等命令时申请一次，并建议保存对应前缀规则。
+3. 联网下载：用户已同意自动执行。在执行环境允许时直接运行；若环境策略阻止，应说明需要开放的网络或命令权限，不重复申请产品层面的逐次批准。
 4. 系统级依赖：需要管理员权限、驱动、系统服务或全局环境变量时先展示变更清单并申请。
 5. Git 推送：本地提交完成后，只有在用户要求同步远程时执行 `git push`。
 
@@ -776,24 +778,30 @@ git commit -m "docs[market]: add 2026 GitHub trend history"
 ### Task 14: 派生 MCP、Skill 与其他工具市场
 
 **Files:**
-- Create: `Resources/MCP_market.md`
-- Create: `Resources/tool_market.md`
-- Modify: `Resources/tool_whitelist.toml`
+- Modify: `Resources/MCP_market.md`
+- Modify: `Resources/tool_market.md`
+- Read: `Resources/tool_whitelist.toml`
+- Read: `Notes/verify_record.md`
 
 - [ ] **Step 1: 从 `github_market.md` 筛选 MCP 和 Skill 项目**
 - [ ] **Step 2: 验证是否可在不修改上游源码的情况下用于 Codex**
 - [ ] **Step 3: 保留原周次、来源和可信度**
 - [ ] **Step 4: 筛选其他 AI 工作流辅助工具**
 - [ ] **Step 5: 排除模型训练和基础模型开发项目**
-- [ ] **Step 6: 为建议项生成 `proposed` 白名单条目**
+- [ ] **Step 6: 为建议项记录 `needs_review` 处理建议；未获用户批准前不修改白名单**
 - [ ] **Step 7: 将现有 `MCP/servers` 与 `Skills/AgentSkillsforContextEngineering` 按相同规则建立来源、版本、许可证、风险和 `proposed` 条目**
 - [ ] **Step 8: 对现有对象逐项区分“源码存在”“可部署”“已配置”“已静态验证”“已动态验证”**
-- [ ] **Step 9: 提交**
+- [ ] **Step 9: 运行 GitHub 总表与两份派生文档的一致性验证**
+- [ ] **Step 10: 提交**
 
-派生文档随 `github_market.md` 的按需更新同步增量维护，不独立定时抓取。
+派生文档随 `github_market.md` 的按需更新同步增量维护，不独立定时抓取。市场收录、`needs_review`、白名单 `approved`、部署和验证是不同状态；市场文档不得产生部署授权。
 
 ```powershell
-git add Resources\MCP_market.md Resources\tool_market.md Resources\tool_whitelist.toml
+node .\scripts\markets\github-market.mjs validate --github .\Resources\github_market.md --mcp .\Resources\MCP_market.md --tool .\Resources\tool_market.md
+```
+
+```powershell
+git add Resources\MCP_market.md Resources\tool_market.md
 git commit -m "docs[market]: derive Codex extension catalogs"
 ```
 
