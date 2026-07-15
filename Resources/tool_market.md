@@ -1,48 +1,61 @@
 # 工具与 Skill 市场
 
-> 采集时间：2026-06-23
-> 范围：`Resources/github_market.md` 派生项、当前主工作区 `E:\codex\Skills\AgentSkillsforContextEngineering`。
+> 更新时间：2026-07-15
+>
+> 来源边界：GitHub 派生项必须存在于 `github_market.md`；白名单 Skill 作为当前受管基线独立记录，不能伪造 GitHub 派生关系。
 
 ## 当前结论
 
-首版工具市场优先记录 AI agent 工作流、Skill、代码评审和设计辅助工具。白名单只加入当前本地可读、可计算哈希、且具备 `SKILL.md` 的代表性 Skill；外部 GitHub 项目暂不加入白名单，直到补齐可重复安装来源、许可证和内容哈希。
+- 66 条相关 GitHub 候选中保留 2 条：1 个 Skill、1 个 Tool；其余 64 条因许可证、安装入口、权限/凭据边界或当前 Codex 兼容性证据不足而排除。
+- 两条保留项的处理建议均为 `needs_review`；它们尚未进入白名单，也不会自动安装。
+- 已批准的 context-engineering Skill 受管目标当前不存在；现有证据只覆盖白名单批准、本地源码哈希，以及个别 Skill 的历史静态/load 记录，未证明当前 Codex 已加载或执行。
 
-## 当前主工作区 Skill 集合
+## GitHub 派生候选
 
-本地路径：`E:\codex\Skills\AgentSkillsforContextEngineering`
-上游：`https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering.git`
-本地 commit：`25e1fa79a33f0985793bcab3c64dde8d020c5132`
-状态：源码存在；未配置；未部署；已静态确认 15 个 `SKILL.md`；未动态验证。
+### Weizhena/Deep-Research-skills
 
-首批纳入 `proposed` 的代表 Skill：
+<!-- derived-record:{"repository":"Weizhena/Deep-Research-skills","week":"2026-W01","kind":"skill"} -->
 
-| ID | 价值 | 风险 |
-| --- | --- | --- |
-| `context-fundamentals` | 上下文工程基础概念和判断框架 | 低 |
-| `context-optimization` | token 预算、检索范围和上下文效率优化 | 中 |
-| `context-compression` | 长会话压缩和交接摘要 | 中 |
-| `filesystem-context` | 文件化上下文、scratchpad 和工具输出离线化 | 中 |
-| `tool-design` | agent tool schema、错误边界和 MCP/tool 设计 | 中 |
-| `multi-agent-patterns` | 多代理隔离、协作和调度模式 | 中 |
-| `harness-engineering` | agent harness、日志、回滚和人工审批边界 | 中 |
+- 来源等级：C 级近似回溯；对应 GitHub 总表 W01 主条目。
+- 类型：上游声称支持 Codex 的研究 Skill 候选。
+- 安装入口：按上游 README 作为 Skill 安装；精确命令和目录布局待核验。
+- 运行时：Codex Skill 宿主；外部资料源可能另需网络或认证。
+- 凭据：项目本体未确认必需凭据；外部资料源凭据必须由受控环境按需提供。
+- 权限：若进入隔离试运行，拟仅允许读取用户明确提供的研究问题和资料，不授予非必要的文件写入、命令执行或账户操作权限；这不是已核验的上游默认行为。
+- 许可证：未确认，是进入白名单前的阻塞项。
+- Codex 兼容性：GitHub 总表记录明确说明支持 Codex，未发现需要修改上游源码的证据。
+- 风险：外部资料可能不可靠或包含提示注入；研究结论、引用和许可证均需人工复核。
+- 处理建议：`needs_review`；核验 `SKILL.md`、许可证、安装布局和资料访问边界后再决定是否加入审批辅助表。
 
-暂未纳入白名单的同仓库 Skill：`advanced-evaluation`、`bdi-mental-states`、`context-degradation`、`evaluation`、`hosted-agents`、`latent-briefing`、`memory-systems`、`project-development`。这些后续可按场景补充。
+### Dimillian/CodexMonitor
 
-## GitHub 市场派生候选
+<!-- derived-record:{"repository":"Dimillian/CodexMonitor","week":"2026-W02","kind":"tool"} -->
 
-| 来源周次 | 仓库 | 类型判断 | 当前处理 |
-| --- | --- | --- | --- |
-| 2026-W01 | `kepano/obsidian-skills` | Obsidian agent skills | 暂不纳白名单；需确认安装结构和许可证 |
-| 2026-W07 | `addyosmani/agent-skills` | 编码 agent skills | 暂不纳白名单；需固定目录快照 |
-| 2026-W15 | `google-labs-code/design.md` | 设计系统格式和 agent 指令 | 暂不纳白名单；更像规范/工具输入 |
-| 2026-W18 | `nexu-io/open-design` | 本地设计 agent 工作台 | 暂不纳白名单；需评估桌面应用依赖 |
-| 2026-W19 | `BigPizzaV3/CodexPlusPlus` | CodexApp 增强工具 | 暂不纳白名单；需确认与当前 Codex CLI 兼容 |
-| 2026-W21 | `alibaba/open-code-review` | LLM agent 代码评审工具 | 暂不纳白名单；需确认部署方式和数据边界 |
-| 2026-W25 | `vercel/eve` | agent 框架 | 暂不纳白名单；需确认成熟度和 API 稳定性 |
+- 来源等级：C 级近似回溯；对应 GitHub 总表 W02 主条目。
+- 类型：Codex app-server 桌面监控工具。
+- 安装入口：按上游 README 构建或安装 Tauri 桌面应用；精确发布包和签名状态待核验。
+- 运行时：Tauri 桌面运行时、可用的 Codex app-server 和本地工作区。
+- 凭据：没有确认独立凭据；Codex 连接和认证处理方式待核验。
+- 权限：可能读取 Codex 会话、任务、工作区或 app-server 状态，应限制到必要范围。
+- 许可证：未确认，是进入白名单前的阻塞项。
+- Codex 兼容性：功能目标明确面向 Codex app-server；当前 CLI/API 版本兼容性尚未实测。
+- 风险：桌面应用供应链、会话数据暴露、app-server 接口变化和本地工作区访问。
+- 处理建议：`needs_review`；先核验许可证、签名/构建链和只读权限，再进行隔离试运行。
 
-## 排除原则
+## 当前受管 Skill 基线
 
-- 不纳入基础模型训练、模型权重或纯研究训练仓库。
-- 不把 README/说明文档仓库直接标为可部署工具。
-- 不把当前 stars 当作历史热度精确值。
-- 不为缺少许可证、安装入口或内容哈希的外部项目生成白名单条目。
+| 白名单 ID | 审批 | 当前受管目标 | 可支持的结论 | Smoke | 处理建议 |
+| --- | --- | --- | --- | --- | --- |
+| `skill.context-engineering.context-fundamentals` | `approved` | 当前目标 `E:\codex\Skills\context-fundamentals\SKILL.md` 不存在 | 历史静态记录存在；当前未部署 | `blocked`：没有运行时功能调用证据 | 保留批准；重新部署后执行 hash/load，不能宣称功能 smoke。 |
+| `skill.context-engineering.filesystem-context` | `approved` | 当前目标 `E:\codex\Skills\filesystem-context\SKILL.md` 不存在 | 白名单批准和本地源码哈希证据存在；当前未部署 | `blocked` | 保留批准；部署时限制文件上下文范围和敏感资料。 |
+| `skill.context-engineering.context-optimization` | `proposed` | 未部署 | 固定上游提交和本地源码哈希证据 | `blocked` | 保持 proposed，按具体场景审批。 |
+| `skill.context-engineering.context-compression` | `proposed` | 未部署 | 固定上游提交和本地源码哈希证据 | `blocked` | 保持 proposed，按具体场景审批。 |
+| `skill.context-engineering.tool-design` | `proposed` | 未部署 | 固定上游提交和本地源码哈希证据 | `blocked` | 保持 proposed，按具体场景审批。 |
+| `skill.context-engineering.multi-agent-patterns` | `proposed` | 未部署 | 固定上游提交和本地源码哈希证据 | `blocked` | 保持 proposed，按具体场景审批。 |
+| `skill.context-engineering.harness-engineering` | `proposed` | 未部署 | 固定上游提交和本地源码哈希证据 | `blocked` | 保持 proposed，按具体场景审批。 |
+
+## 状态解释
+
+- Skill 的文件存在、内容 hash 和受管安装验证最多支持静态/load 层结论，不等于 Codex 运行时实际采用了 Skill 指令。
+- 没有最小功能调用证据时，Smoke 必须保持 `blocked`。
+- “市场候选”表示收录类别，`needs_review` 表示当前处理建议，白名单 `approved` 表示正式审批状态；市场文档不能改变审批结果。
