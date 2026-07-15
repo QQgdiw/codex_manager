@@ -1,5 +1,17 @@
 # 项目关键记录
 
+## 2026-07-15：MCP 与工具派生市场重建
+
+- 对 GitHub 总表中的 66 条 MCP、Skill、Codex 或 Agent 相关候选进行分类审阅；MCP 派生候选为 0，工具与 Skill 市场保留 `Weizhena/Deep-Research-skills` 和 `Dimillian/CodexMonitor` 两条 `needs_review` 候选，其余 64 条排除。
+- 市场文档严格区分白名单审批、历史验证和当前运行状态。filesystem 与 sequential-thinking 虽为 `approved` 且曾通过 static/load/smoke，但 2026-07-15 的 `codex mcp list` 中未注册；两个 approved context-engineering Skill 的当前受管目标均不存在。
+- 独立规格与中文质量复审后，修正了候选权限边界、`node_repl` 受管归属、proposed Skill 逐项可追溯性和源码哈希证据措辞。
+- 派生验证通过：236 条 GitHub 记录、跨周重复 0、派生缺失 0、未标记条目 0；Node 测试 15/15、Pester unit 312/312 通过。
+
+## 2026-07-15：Windows PowerShell 测试启动方式
+
+- 通过当前 PowerShell 进程使用 `Start-Process powershell.exe` 执行 Pester 曾产生 60 个模块加载失败，包括 `Get-FileHash` 不可用和 Security TypeData 重复；同一工作树改用直接 `powershell.exe ...` 子进程后，定向测试 57/57、完整 unit 312/312 通过。
+- 后续 Windows PowerShell 5.1 回归应使用直接子进程并重定向输出，不用 `Start-Process` 包裹测试入口；遇到同类模块错误先做独立命令探针和定向重跑，不能误报为代码回归。
+
 ## 2026-07-15：GitHub 历史档案正式重建
 
 - W01-W29 共审阅 658 条唯一候选，保留 236 条、排除 422 条；正式文档包含 29 个周标题和 236 个 `github-record` 标记。

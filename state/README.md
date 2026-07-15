@@ -8,7 +8,7 @@
 
 首期基础闭环已经完成端到端验收。正式需求和计划分别位于 `Resources/PRD.md` 与 `Resources/PP.md`；资源市场、白名单、审批辅助表、六类场景配置、PowerShell 管理入口、DPAPI 凭据、受管回滚、dry-run 部署和分层验证记录均已建立。
 
-2026-07-15 已进入市场文档质量审计与整理阶段，重点覆盖 `plugins_market.md`、`github_market.md`、`MCP_market.md` 和 `tool_market.md`。当前环境的 Plugins 完整目录必须以 app-server `plugin/list` 为准；旧 `openai/plugins.git` 和 `codex plugin list` 只覆盖不同范围的 snapshot，不能继续作为 `/plugins` 完整清单。用户已审阅并确认设计与实施计划。Task 1 至 Task 4 已完成 Plugins 目录采集、正式重建和 GitHub 采集/验证工具。Task 5 已重建 `Resources/github_market.md`：逐项审阅 W01-W29 的 658 条候选，保留 236 条、排除 422 条，29 个周标题完整，跨周重复、派生缺失和未标记条目均为 0。`MCP_market.md` 与 `tool_market.md` 尚未重建。
+2026-07-15 已进入市场文档质量审计与整理阶段，重点覆盖 `plugins_market.md`、`github_market.md`、`MCP_market.md` 和 `tool_market.md`。当前环境的 Plugins 完整目录必须以 app-server `plugin/list` 为准；旧 `openai/plugins.git` 和 `codex plugin list` 只覆盖不同范围的 snapshot，不能继续作为 `/plugins` 完整清单。用户已审阅并确认设计与实施计划。Task 1 至 Task 6 已完成：Plugins 正式目录包含 2,034 条记录和 1,047 条重点索引；GitHub W01-W29 的 658 条候选经逐项审阅后保留 236 条、排除 422 条；MCP GitHub 派生候选为 0，工具与 Skill 派生候选保留 2 条。跨周重复、派生缺失和未标记条目均为 0。当前进入 Task 7 最终跨文档质量审计和交付。
 
 2026-07-15 用户确认 W01-W26 也必须按新规则逐项重审。设计与实施计划均已确认并执行；历史条目统一按 C 级近似回溯描述，不把当前 README 或 Star 写成历史周事实。
 
