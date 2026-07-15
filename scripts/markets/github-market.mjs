@@ -222,6 +222,35 @@ function markersFromDocument({ path, content }, markerName) {
   return { records, errors };
 }
 
+function validateGitHubDocumentStructure({ path, content }) {
+  const lines = content.split(/\r?\n/);
+  const repositoryHeadingPattern = /^###\s+([^\s/]+\/[^\s/]+)\s*$/;
+  const headingPattern = /^#{1,3}\s/;
+  const markerPattern = /<!--\s*github-record:.*?\s*-->/g;
+  const errors = [];
+  let unmarkedEntries = 0;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const heading = repositoryHeadingPattern.exec(lines[index]);
+    if (!heading || isIsoWeek(heading[1])) {
+      continue;
+    }
+    let markerCount = 0;
+    for (let sectionIndex = index + 1; sectionIndex < lines.length; sectionIndex += 1) {
+      if (headingPattern.test(lines[sectionIndex])) {
+        break;
+      }
+      markerCount += lines[sectionIndex].match(markerPattern)?.length ?? 0;
+    }
+    if (markerCount !== 1) {
+      unmarkedEntries += 1;
+      errors.push(`${recordLocation(path, index + 1)}: repository heading ${heading[1]} requires exactly one github-record marker (found ${markerCount})`);
+    }
+  }
+
+  return { errors, unmarkedEntries };
+}
+
 function validateGitHubRecord(entry, errors) {
   const { record, path, line } = entry;
   const location = recordLocation(path, line);
@@ -256,7 +285,7 @@ function validateDerivedRecord(entry, errors) {
   }
 }
 
-function summarize(records, duplicates, derivedMissing) {
+function summarize(records, duplicates, derivedMissing, unmarkedEntries) {
   const weeklyCounts = new Map();
   for (const entry of records) {
     weeklyCounts.set(entry.record.week, (weeklyCounts.get(entry.record.week) ?? 0) + 1);
@@ -271,6 +300,7 @@ function summarize(records, duplicates, derivedMissing) {
     weeksUnder20,
     duplicates,
     derivedMissing,
+    unmarkedEntries,
   };
 }
 
@@ -279,9 +309,15 @@ export function validateMarketDocuments({ github, mcp, tool } = {}) {
     throw usageError('--github document is required');
   }
   const githubMarkers = markersFromDocument(github, 'github-record');
+  const githubStructure = validateGitHubDocumentStructure(github);
   const mcpMarkers = mcp ? markersFromDocument(mcp, 'derived-record') : { records: [], errors: [] };
   const toolMarkers = tool ? markersFromDocument(tool, 'derived-record') : { records: [], errors: [] };
-  const errors = [...githubMarkers.errors, ...mcpMarkers.errors, ...toolMarkers.errors];
+  const errors = [
+    ...githubMarkers.errors,
+    ...githubStructure.errors,
+    ...mcpMarkers.errors,
+    ...toolMarkers.errors,
+  ];
 
   for (const entry of githubMarkers.records) {
     validateGitHubRecord(entry, errors);
@@ -334,7 +370,7 @@ export function validateMarketDocuments({ github, mcp, tool } = {}) {
   }
 
   return {
-    summary: summarize(githubMarkers.records, duplicates, derivedMissing),
+    summary: summarize(githubMarkers.records, duplicates, derivedMissing, githubStructure.unmarkedEntries),
     errors,
   };
 }
@@ -349,6 +385,7 @@ function formatSummary(summary) {
     `weeksUnder20: ${lowWeeks}`,
     `duplicates: ${summary.duplicates}`,
     `derivedMissing: ${summary.derivedMissing}`,
+    `unmarkedEntries: ${summary.unmarkedEntries}`,
   ].join('\n');
 }
 

@@ -80,6 +80,40 @@ test('rejects derived records missing GitHub origins and records duplicated betw
   assert.match(result.errors.join('\n'), /tool\.md:1: derived record also appears in mcp\.md:2/);
 });
 
+test('rejects a GitHub repository heading without its record marker', () => {
+  const result = validateMarketDocuments({
+    github: {
+      path: 'github.md',
+      content: [
+        '### owner/missing',
+        'Repository details.',
+        '### 2026-W01',
+      ].join('\n'),
+    },
+  });
+
+  assert.equal(result.summary.unmarkedEntries, 1);
+  assert.match(result.errors.join('\n'), /github\.md:1: repository heading owner\/missing requires exactly one github-record marker \(found 0\)/);
+});
+
+test('rejects duplicate GitHub record markers under one repository heading', () => {
+  const record = githubRecord(validGitHubRecord({ repository: 'owner/duplicate' }));
+  const result = validateMarketDocuments({
+    github: {
+      path: 'github.md',
+      content: [
+        '### owner/duplicate',
+        record,
+        record,
+        '### 2026-W01',
+      ].join('\n'),
+    },
+  });
+
+  assert.equal(result.summary.unmarkedEntries, 1);
+  assert.match(result.errors.join('\n'), /github\.md:1: repository heading owner\/duplicate requires exactly one github-record marker \(found 2\)/);
+});
+
 test('collects every GitHub search page and stores only public repository fields', async () => {
   const requests = [];
   const fetchImpl = async (url, options) => {
