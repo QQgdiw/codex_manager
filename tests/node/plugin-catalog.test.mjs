@@ -304,6 +304,13 @@ test('renders nested plugin interface metadata and assigns each focused record o
   assert.match(document, /## 嵌入式与硬件\n\n- Embedded Platform（embedded-platform，openai-curated-remote）/);
   const focusedIndex = document.split('## 完整清单')[0];
   assert.equal((focusedIndex.match(/embedded-platform/g) ?? []).length, 1);
+  for (const record of validatePluginListResult(interfaceFixtureResult).records) {
+    const details = record.plugin.interface;
+    assert.match(
+      focusedIndex,
+      new RegExp(`- ${details.displayName}（${record.id}，${record.marketplaceName}），recordKey：${record.recordKey}`),
+    );
+  }
 });
 
 test('uses the complete upstream identity for each record key', () => {

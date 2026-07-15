@@ -280,7 +280,7 @@ export function renderPluginsMarket(catalog, metadata = {}) {
       lines.push(`## ${group.title}`, '');
       for (const record of group.records) {
         const details = recordDetails(record);
-        lines.push(`- ${markdownCell(details.displayName)}（${markdownCell(record.id)}，${markdownCell(record.marketplaceName)}）`);
+        lines.push(`- ${markdownCell(details.displayName)}（${markdownCell(record.id)}，${markdownCell(record.marketplaceName)}），recordKey：${markdownCell(record.recordKey)}`);
       }
       lines.push('');
     }
