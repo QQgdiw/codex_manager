@@ -76,7 +76,10 @@ function marketplaceNameOf(marketplace) {
 }
 
 function pluginField(plugin, field) {
-  return plugin[field] ?? plugin.manifest?.[field] ?? plugin.metadata?.[field];
+  return plugin[field]
+    ?? plugin.interface?.[field]
+    ?? plugin.manifest?.[field]
+    ?? plugin.metadata?.[field];
 }
 
 function displayValue(plugin, fields, fallback = '') {
@@ -94,15 +97,56 @@ function chineseCategory(plugin) {
   const categories = {
     ai: '人工智能',
     analytics: '数据分析',
+    'business & operations': '业务与运营',
+    'communication': '沟通协作',
+    'creativity': '创意',
     data: '数据分析',
+    'data & analytics': '数据分析',
     database: '数据库',
     development: '开发工具',
+    'developer tools': '开发工具',
     devops: '开发运维',
     documentation: '文档',
+    'education & research': '教育与研究',
+    entertainment: '娱乐',
+    finance: '金融',
+    healthcare: '医疗健康',
+    other: '其他',
     productivity: '效率工具',
     security: '安全',
+    travel: '出行',
   };
   return categories[category] ?? '其他';
+}
+
+function focusGroup(record) {
+  const details = recordDetails(record);
+  const keywords = [
+    record.id,
+    ...record.keywords,
+    details.displayName,
+    details.description,
+    details.capabilities,
+  ].flatMap((value) => Array.isArray(value) ? value : [value]);
+  const text = keywords.join(' ').toLowerCase();
+  const category = chineseCategory(record.plugin);
+
+  if (/\b(embedded|hardware|firmware|microcontroller|electronics|pcb)\b/.test(text)) {
+    return '嵌入式与硬件';
+  }
+  if (category === '开发工具' || category === '开发运维' || category === '安全') {
+    return '软件开发与安全';
+  }
+  if (category === '文档' || category === '数据分析' || category === '数据库' || category === '教育与研究') {
+    return '文档数据与研究';
+  }
+  if (/\b(browser|automation|web scraping|crawler)\b/.test(text)) {
+    return '浏览器与自动化';
+  }
+  if (category === '沟通协作' || category === '效率工具' || category === '业务与运营') {
+    return '协作与项目管理';
+  }
+  return null;
 }
 
 function markdownCell(value) {
@@ -120,10 +164,10 @@ function recordDetails(record) {
   const plugin = record.plugin;
   return {
     displayName: displayValue(plugin, ['displayName', 'name', 'title'], record.id),
-    developer: displayValue(plugin, ['developer', 'publisher', 'author', 'organization']),
+    developer: displayValue(plugin, ['developer', 'developerName', 'publisher', 'author', 'organization']),
     description: displayValue(plugin, ['description', 'shortDescription', 'summary']),
     capabilities: displayValue(plugin, ['capabilities', 'features'], record.keywords),
-    website: displayValue(plugin, ['website', 'url', 'homepage']),
+    website: displayValue(plugin, ['website', 'websiteUrl', 'url', 'homepage']),
   };
 }
 
@@ -218,22 +262,31 @@ export function renderPluginsMarket(catalog, metadata = {}) {
     '',
   ];
 
-  const focused = records.filter((record) => {
-    const category = chineseCategory(record.plugin);
-    return category === '开发工具' || category === '开发运维' || category === '人工智能';
-  });
-  if (focused.length === 0) {
+  const focusedGroups = [
+    '软件开发与安全',
+    '文档数据与研究',
+    '浏览器与自动化',
+    '协作与项目管理',
+    '嵌入式与硬件',
+  ].map((title) => ({
+    title,
+    records: records.filter((record) => focusGroup(record) === title),
+  })).filter((group) => group.records.length > 0);
+  if (focusedGroups.length === 0) {
     lines.push('无。');
   }
   else {
-    for (const record of focused) {
-      const details = recordDetails(record);
-      lines.push(`- ${markdownCell(details.displayName)}（${markdownCell(record.id)}，${markdownCell(record.marketplaceName)}）`);
+    for (const group of focusedGroups) {
+      lines.push(`## ${group.title}`, '');
+      for (const record of group.records) {
+        const details = recordDetails(record);
+        lines.push(`- ${markdownCell(details.displayName)}（${markdownCell(record.id)}，${markdownCell(record.marketplaceName)}）`);
+      }
+      lines.push('');
     }
   }
 
   lines.push(
-    '',
     '## 完整清单',
     '',
     '| 记录键 | 插件 ID | Marketplace | 版本 | 展示名称 | 开发者 | 中文类别 | 官方简述 | 能力 | 可用状态 | 安装策略 | 认证策略 | 网站 |',

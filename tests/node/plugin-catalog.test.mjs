@@ -83,6 +83,102 @@ const fixtureResult = {
   marketplaceLoadErrors: [],
 };
 
+const interfaceFixtureResult = {
+  marketplaces: [
+    {
+      name: 'openai-curated-remote',
+      plugins: [
+        {
+          id: 'data-analytics',
+          remotePluginId: 'data-analytics-v1',
+          version: '1.0.0',
+          availability: 'available',
+          installPolicy: 'allowed',
+          authPolicy: 'none',
+          keywords: ['research'],
+          interface: {
+            displayName: 'Data Analytics',
+            shortDescription: 'Analyze business data',
+            developerName: 'OpenAI',
+            category: 'Data & Analytics',
+            capabilities: ['SQL dashboards', 'Data exploration'],
+            websiteUrl: 'https://example.test/data-analytics',
+          },
+        },
+        {
+          id: 'developer-tools',
+          remotePluginId: 'developer-tools-v1',
+          version: '1.0.0',
+          availability: 'available',
+          installPolicy: 'allowed',
+          authPolicy: 'none',
+          keywords: ['code'],
+          interface: {
+            displayName: 'Developer Tools',
+            shortDescription: 'Build and review software',
+            developerName: 'OpenAI',
+            category: 'Developer Tools',
+            capabilities: ['Code review'],
+            websiteUrl: 'https://example.test/developer-tools',
+          },
+        },
+        {
+          id: 'browser-automation',
+          remotePluginId: 'browser-automation-v1',
+          version: '1.0.0',
+          availability: 'available',
+          installPolicy: 'allowed',
+          authPolicy: 'none',
+          keywords: ['browser', 'automation'],
+          interface: {
+            displayName: 'Browser Automation',
+            shortDescription: 'Automate browser workflows',
+            developerName: 'OpenAI',
+            category: 'Productivity',
+            capabilities: ['Browser automation'],
+            websiteUrl: 'https://example.test/browser-automation',
+          },
+        },
+        {
+          id: 'team-communication',
+          remotePluginId: 'team-communication-v1',
+          version: '1.0.0',
+          availability: 'available',
+          installPolicy: 'allowed',
+          authPolicy: 'none',
+          keywords: ['collaboration'],
+          interface: {
+            displayName: 'Team Communication',
+            shortDescription: 'Coordinate project conversations',
+            developerName: 'OpenAI',
+            category: 'Communication',
+            capabilities: ['Project updates'],
+            websiteUrl: 'https://example.test/team-communication',
+          },
+        },
+        {
+          id: 'embedded-platform',
+          remotePluginId: 'embedded-platform-v1',
+          version: '1.0.0',
+          availability: 'available',
+          installPolicy: 'allowed',
+          authPolicy: 'none',
+          keywords: ['embedded', 'hardware'],
+          interface: {
+            displayName: 'Embedded Platform',
+            shortDescription: 'Develop embedded hardware',
+            developerName: 'OpenAI',
+            category: 'Developer Tools',
+            capabilities: ['Firmware development'],
+            websiteUrl: 'https://example.test/embedded-platform',
+          },
+        },
+      ],
+    },
+  ],
+  marketplaceLoadErrors: [],
+};
+
 function cloneFixture(overrides = {}) {
   return {
     ...structuredClone(fixtureResult),
@@ -190,6 +286,24 @@ test('preserves upstream duplicate ids as distinct records', () => {
   assert.equal(new Set(catalog.records.map((record) => record.recordKey)).size, 3);
   assert.match(renderPluginsMarket(catalog, metadata), /原始记录数：3/);
   assert.equal((renderPluginsMarket(catalog, metadata).match(/<!-- plugin-record:/g) ?? []).length, 3);
+});
+
+test('renders nested plugin interface metadata and assigns each focused record once', () => {
+  const document = renderPluginsMarket(validatePluginListResult(interfaceFixtureResult), metadata);
+
+  assert.match(document, /\| Data Analytics \| OpenAI \| 数据分析 \| Analyze business data \| SQL dashboards, Data exploration \|/);
+  assert.match(document, /https:\/\/example\.test\/data-analytics/);
+  assert.match(document, /\| Developer Tools \| OpenAI \| 开发工具 \|/);
+  assert.match(document, /\| Browser Automation \| OpenAI \| 效率工具 \|/);
+  assert.match(document, /\| Team Communication \| OpenAI \| 沟通协作 \|/);
+
+  assert.match(document, /## 软件开发与安全\n\n- Developer Tools（developer-tools，openai-curated-remote）/);
+  assert.match(document, /## 文档数据与研究\n\n- Data Analytics（data-analytics，openai-curated-remote）/);
+  assert.match(document, /## 浏览器与自动化\n\n- Browser Automation（browser-automation，openai-curated-remote）/);
+  assert.match(document, /## 协作与项目管理\n\n- Team Communication（team-communication，openai-curated-remote）/);
+  assert.match(document, /## 嵌入式与硬件\n\n- Embedded Platform（embedded-platform，openai-curated-remote）/);
+  const focusedIndex = document.split('## 完整清单')[0];
+  assert.equal((focusedIndex.match(/embedded-platform/g) ?? []).length, 1);
 });
 
 test('uses the complete upstream identity for each record key', () => {
