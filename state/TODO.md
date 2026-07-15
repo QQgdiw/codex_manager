@@ -5,7 +5,7 @@
 ## 当前任务：市场文档质量审计与整理
 
 - [x] 核实 `openai/plugins.git`、`codex plugin list` 与 `/plugins` 数据范围差异。
-- [x] 通过 Codex app-server `plugin/list` 复现 1984 条插件记录，并确认 1 组上游重复限定 ID。
+- [x] 首次通过 Codex app-server `plugin/list` 复现 1,984 条插件记录，并确认 1 组上游重复限定 ID；该数量仅为历史探测快照。
 - [x] 明确四份市场文档的收录权威、补充来源和运行状态来源。
 - [x] 编写 `docs/superpowers/specs/2026-07-13-market-document-quality-audit-design.md`。
 - [x] 用户审阅并确认市场文档质量审计设计说明。
@@ -19,8 +19,8 @@
 - [x] Task 5 扩展：重审并重建 W01-W29 全部 GitHub 候选；658 条中保留 236、排除 422，29 周完整，硬校验通过。
 - [x] Task 5 扩展设计与实施计划均已确认并执行。
 - [x] Task 6：重建 `MCP_market.md` 和 `tool_market.md`；66 条相关候选保留 2 条工具/Skill、MCP 派生为 0，并区分白名单批准、历史验证和当前注册/部署状态。
-- [ ] Task 7：统一四份市场文档及相关需求、计划、GUIDE 和生成规则的术语与职责。
-- [ ] Task 7：完成一致性、来源、状态、去重、中文质量、敏感信息和全量测试检查。
+- [x] Task 7：统一四份市场文档及相关需求、计划、GUIDE 和生成规则的术语与职责。
+- [x] Task 7：完成一致性、来源、状态、去重、中文质量、敏感信息和全量测试检查；Node 36/36、Pester `-All` 361/361 通过。
 
 ## 已完成
 
@@ -40,7 +40,7 @@
 - [x] 建立项目状态文件。
 - [x] 建立结构化审批辅助表 `Resources/approval_review.toml` 和人类可读审批摘要 `Resources/approval_review.md`。
 - [x] 按用户批准，将 `approve_now` 和 `needs_review` 对应白名单条目更新为 `approved`，当前批准工具数为 6。
-- [x] 重建 `Resources/plugins_market.md`，记录本地缓存、CLI 和 GitHub `openai/plugins` 来源差异。
+- [x] 早期按本地缓存、CLI 和 GitHub `openai/plugins` 来源重建 `Resources/plugins_market.md`；该方案已被 app-server `plugin/list` 唯一权威规则取代。
 - [x] 扩展 `Resources/github_market.md` 为 2026-W01 至 2026-W26 工程候选池，并实现跨周去重规则说明。
 - [x] 重写 `Resources/event_market.md`，从泛 AI 行业事件调整为工程工作流事件市场。
 - [x] 完成市场与审批强化验收：全量测试、TOML 解析、敏感 token 扫描和 Git 空白检查。
@@ -109,4 +109,4 @@
 - [x] 完成残留核验：目标 filesystem Node 进程数为 0，`.tmp\mcp-smoke` operation root 数量为 0。
 - [x] 修复 rollback 并发测试在真实机器负载下 30 秒锁等待不足的问题，将等待上限提高到 120 秒。
 - [x] 验证：目标测试通过；最终全量测试 `356 passed / 0 failed`。
-- [ ] 下一步进入文档质量审计与整理阶段，统一当前工程状态和长期维护口径。
+- [x] 已进入文档质量审计与整理阶段；当前执行至 Task 7 最终跨文档审计。

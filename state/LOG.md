@@ -1,5 +1,14 @@
 # 项目关键记录
 
+## 2026-07-15：市场文档质量审计完成
+
+- `Resources/GUIDE.md` 已改为四份重点市场文档的维护与协作入口，说明文档职责、更新顺序、真实命令、人工审阅点、失败保留旧版和白名单审批边界。
+- PRD 与 PP 已统一职责：`MCP_market.md` 负责 MCP 派生候选和受管 MCP 基线，`tool_market.md` 负责 Skill/Tool 派生候选和受管 Skill 基线；市场收录不改变白名单。
+- 使用 Codex CLI `0.144.4` 的真实 app-server `plugin/list` 原子刷新 `plugins_market.md`：1 个 marketplace、2,039 条记录、加载错误 0；正式目录即时 `--check` 通过。
+- 采集器现在优先记录 `initialize.serverInfo.version`，缺失时通过受控 `codex --version` 回溯；版本查询超时或输出超限会终止进程树，Windows `.cmd` 真实挂起测试确认后代 Node PID 已退出。`taskkill` 失败会明确返回 `codex_version_cleanup_failed`，不把降级清理误报为成功。
+- 最终验证：Plugins 一致性检查退出 0；GitHub 236 条记录、跨周重复 0、派生缺失 0、未标记条目 0；Node 36/36、Pester `-All` 361/361；`git diff --check` 通过，真实形态 key/token 扫描 0 命中。
+- 宽模式敏感扫描唯一 `auth.json {…}` 命中位于日志脱敏测试夹具，使用 `RAW-AUTH-TOKEN` 占位符，并由测试断言不进入结果；未读取任何真实认证文件正文。
+
 ## 2026-07-15：MCP 与工具派生市场重建
 
 - 对 GitHub 总表中的 66 条 MCP、Skill、Codex 或 Agent 相关候选进行分类审阅；MCP 派生候选为 0，工具与 Skill 市场保留 `Weizhena/Deep-Research-skills` 和 `Dimillian/CodexMonitor` 两条 `needs_review` 候选，其余 64 条排除。
