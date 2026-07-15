@@ -2,10 +2,10 @@
 
 ## 采集摘要
 
-- 采集时间：2026-07-15T04:07:48.458Z
-- Codex 版本：未记录
+- 采集时间：2026-07-15T09:35:47.808Z
+- Codex 版本：codex-cli 0.144.4
 - Marketplace 数：1
-- 原始记录数：2034
+- 原始记录数：2039
 
 ## 来源边界
 
@@ -284,7 +284,7 @@
 - Boltz（boltz-api-cli@openai-curated-remote，openai-curated-remote），recordKey：e4dc1ff22d8e4f7b73d2521f138a4683f62ff06070c89f5e02f1a9fae0e0b7bf
 - Book Report（app-6a331a47b4e481918568c30498ea0a94@openai-curated-remote，openai-curated-remote），recordKey：2f275431454456a39926f6f5249f27d86667dfbf5d2e29e078162e9ea9c37f43
 - Centiment（app-6a2792c624bc81919203ca37f2002068@openai-curated-remote，openai-curated-remote），recordKey：db9931f139ea3dc92458e0e315bbd6ee73b0f952ae61c673cd7802a1bc1d04d9
-- ChartMogul（app-6a31190204b481919633d8e2f3dc18a6@openai-curated-remote，openai-curated-remote），recordKey：b9726b6cb2219e9d455659d69376ada904ec8b003c51640eb9c99ff49ef6bc50
+- ChartMogul（app-6a31190204b481919633d8e2f3dc18a6@openai-curated-remote，openai-curated-remote），recordKey：b176a3a30a9555ad92bb99af9115ed02db2a728d950ad6710211b16abe93c065
 - Chymia（app-69c1fea9df4c8191bac927f2c3f7d884@openai-curated-remote，openai-curated-remote），recordKey：e22fdcdcc05bb1e29b34bd702d15707918539d12758b29c626eb53e53b0c338c
 - Cody Reading（app-6a3d5296dac08191940324e1c0a68767@openai-curated-remote，openai-curated-remote），recordKey：fd807328f389dbbb490dcca7b3b27da068a56275b5f2a277d788bb2738f504cd
 - College Vidya（app-6a215e2f7fa481918c335bd517e4ca01@openai-curated-remote，openai-curated-remote），recordKey：751180c62461f51b1a4134d699012d6bddeb941e11160a375c070212e3e0b043
@@ -759,7 +759,7 @@
 - Canonical Company Search（app-6a1ed22d523481918b6f6d8ab74b8052@openai-curated-remote，openai-curated-remote），recordKey：91742380b0ecbdbea40442fc6064bcf075ff49c5affe2a71a6183a08fab45639
 - Capacities（app-69d68bc1583481919f72c9f8c9344bf3@openai-curated-remote，openai-curated-remote），recordKey：a6e82d9b29496a37720b0fa204d355d1f13cb6fb7d3f524a168ca8e1d8bf7b73
 - Career Adapter（app-6a2432ff1a688191b169018245375da2@openai-curated-remote，openai-curated-remote），recordKey：0c4cced85aac3fb923dd938dcb63705455115f9eca9cc89496a34a14b7d70539
-- Career Centre（career-command-centre@openai-curated-remote，openai-curated-remote），recordKey：da0417a52baef523c3ff7c2f13ebb0f9a0239ec8f26df319f171d31e1492b509
+- Career Centre（career-command-centre@openai-curated-remote，openai-curated-remote），recordKey：c87a1288c7db8b7f50b910d5f9cdc0836da43e8f7c95e3c2b14cc6a908110646
 - Caretta（app-6a0b917cef048191b0dcb52920aa014a@openai-curated-remote，openai-curated-remote），recordKey：fb28f8ccdfb8a9e73d778f3177650189cda589f842a17dee9ac44918ea5edd18
 - Catalog CLI Pro（app-6a2b2659cd308191a61526e4a4cf799e@openai-curated-remote，openai-curated-remote），recordKey：211bae81b9b83daa96b8ef3b96e4ef0fab30dcfabccb012d7e40ccb84a816c55
 - ChatData Sync（app-6a260ccbce68819189d814e03106a38a@openai-curated-remote，openai-curated-remote），recordKey：3f04462d8bc7262c8307337822646810ef2a53ab65158a3bb2ec8daf4bfbbe62
@@ -803,6 +803,7 @@
 - dochost.io（app-6a36afbab6388191b1e224d0da281351@openai-curated-remote，openai-curated-remote），recordKey：75b274b8d400cf33527318e35695a303dd6b09fa83313d4eedb60ab3cd669247
 - Dockflow（app-696779b8a08c8191878932b84b3a41fe@openai-curated-remote，openai-curated-remote），recordKey：2fcab3bf017b338752433039e0449628141ccee51372d0b65d349155ada1770d
 - Document360（app-6a27d8c19cd0819192c024710ccd05fc@openai-curated-remote，openai-curated-remote），recordKey：e1076d298e064c1ce1257178ea3e94653fea2ca944ee33742afb2a8fb5279ead
+- DotSpark（app-6a3baa683dc4819189b77175a073cd98@openai-curated-remote，openai-curated-remote），recordKey：42aed913c7a8a5d6564f30f0e492d95f6ec57466eeb3765a66279d276e4f150c
 - Dover（app-6a4d629a6d208191ae050b699e821285@openai-curated-remote，openai-curated-remote），recordKey：ec9da53717ccc0beb7d294d0d8a5b74081fa426ff6968ae88ea94735117a401c
 - draftmend（app-6a14f4e1362881918ef25e3d1784e036@openai-curated-remote，openai-curated-remote），recordKey：668230da32d4d4d2ac63a7155b7c844d73e7fd507b035ba5e74999091f647255
 - Edito-Pdf（app-6a2290ba9f308191b49369b96c230b3b@openai-curated-remote，openai-curated-remote），recordKey：c9613e6490d2fb6cd7a612e23cf6fcd88a4beddbec41b4b2a8f325e4d437e2a3
@@ -865,6 +866,7 @@
 - IQLand（app-6a3bfcb949948191a2016f5cd5235b59@openai-curated-remote，openai-curated-remote），recordKey：41f3c19a73825b364e21f85dd01faace1510d54a4dba3dc87aaf2af902399a46
 - IRIS AI（app-6a26f50be0a4819192d2b41a57d790a4@openai-curated-remote，openai-curated-remote），recordKey：b3290c3e16c1d6d4d9cde6be6f0381a5361a9aa9cf94515b8eedda2fcd9abff0
 - Is It Down? Availability Check（app-6a4d0a2713b8819190c1b0859af479d8@openai-curated-remote，openai-curated-remote），recordKey：0f78d9bd6636cfde9f10aa2696457f7fa9feee670fd35655db902a8f9dfb9bc7
+- iZap（app-6a259d81ab048191b479aaddf47d0276@openai-curated-remote，openai-curated-remote），recordKey：b95217ec69564926332dc67972911f7d58be2075c28a1b8f2e4cca07cfc9b747
 - Jade Note（app-6a2a7f2cbb948191a603f3b9dea8e0f0@openai-curated-remote，openai-curated-remote），recordKey：74b014beaf14f5eb7ecba2d878758a5a78a677119f3f39d9eee9030263e9b296
 - Jicoo（app-6a3020fd4b8881919d47b26f5eadf8eb@openai-curated-remote，openai-curated-remote），recordKey：0c6cf75a0ebca55631e3ae63f9dc546137d4acc90894c46060c1bacbbac538b9
 - Jobicy（app-6a2f6c66e6348191abac0a9c9716cb89@openai-curated-remote，openai-curated-remote），recordKey：88c83f361e4c3d4a54327783f6d0f3fdfee647c0515112485dc8dd512680c8bc
@@ -873,6 +875,7 @@
 - Jordi Spoki（app-6a291e83d9408191aae8e303c3ebe9c8@openai-curated-remote，openai-curated-remote），recordKey：2d068b2020fa8991d29024b713d9ef51a3719472d31187e476f31bfd063bc452
 - Jotform Apps（app-6a3a752557d08191aa6d2aa4442db6ad@openai-curated-remote，openai-curated-remote），recordKey：8c33da0acf5eace902f4eeb2011fef1c0c5e85054e9e354c18e902b5f09c057a
 - Jotform Sign（app-6a3d24829b348191a5008f051aff66a4@openai-curated-remote，openai-curated-remote），recordKey：911026660ffc3219abe25fe65ead7245b9ddf35ebbfcc8a38f34988e892cacf8
+- Juridata（app-6a3ba5ef1c448191a4c89868b2688b7e@openai-curated-remote，openai-curated-remote），recordKey：60e2a7a7454ac0a608ec8f3b10889c53717f7feed3507022f9341a74dca12c9e
 - KChat（app-6a31778327b48191b0222e74be3db746@openai-curated-remote，openai-curated-remote），recordKey：731769ebd0ce0f48d7bd0798a97b089ce233e982420d0e74c351be0f1035b709
 - Keypup（app-6a33b63268508191a1f39c64c26a7973@openai-curated-remote，openai-curated-remote），recordKey：320aa1f9520bfad4259d1063fdfa876e9b848494f610fd67837ed5b2ef919d9d
 - Keyword.com（app-6a0733f6c6b08191a7b2a5bf2d930999@openai-curated-remote，openai-curated-remote），recordKey：06aab4fb92a3bdc324836b43dbfec1c6f8fd19aa11f420bd434a31d6380bcaca
@@ -979,6 +982,7 @@
 - Shchebitka AI Planner（app-6a36e0883cf08191ba2f61e0548eb531@openai-curated-remote，openai-curated-remote），recordKey：4a89f768e3464f83bdb6d9814ba78e19ca99fd37e879a7fec8f0f9bc21e3a648
 - Short Circuit（short-circuit-codex@openai-curated-remote，openai-curated-remote），recordKey：329bb6dc2ed0922caa3165ae601f14e1ff5417c5abf1f2515a395a7be437d23a
 - Simpliciter AI（app-6a4284a796448191888965e9d0e7c6de@openai-curated-remote，openai-curated-remote），recordKey：c2b393d30339e234db3a423909fe28f44e85b5cac492e82407a023da30abb1f9
+- SiteGuru（app-6a463643f0ac8191828c01f481e1d3ea@openai-curated-remote，openai-curated-remote），recordKey：d8353f57e4687eaf48eebd854cf7aa3b1891ea23a0bbba54582cc09b5481a760
 - Sitemate（app-696f2f3f51a08191a78ce6b15ddfa118@openai-curated-remote，openai-curated-remote），recordKey：013b701dc6050ca3272cb5e425503b68f2a800ca367d699402b58d731f34b02f
 - Skylar（app-6a09a2fba77081919028669a899e3a77@openai-curated-remote，openai-curated-remote），recordKey：5398584897752c7af9c26813c4aa73120fa004749f60f1df2c88d010d016625b
 - SmartMarketingSuites（app-6a07e1cb5ebc8191a74424cb58eee03a@openai-curated-remote，openai-curated-remote），recordKey：2716c118e0423271c883d77b59f63efedef4feab398f7021e4d830b30b5fd964
@@ -2067,8 +2071,8 @@
 | 7631c1f9335c67d9d97ebcc793d6f2dcd3e434484d5b23a4aeb394b62eaad73d | app-69ef8d8082c08191bfa97afe1cf1a361@openai-curated-remote | openai-curated-remote | 2.0.0 | Ideals | Ideals Group GmbH | 业务与运营 | Manage VDR projects |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://www.idealsvdr.com/ |
 <!-- plugin-record:016bd3227550f6eceeabf62e019786ef48a1bac023f09c0be4c97fa2bc48176a -->
 | 016bd3227550f6eceeabf62e019786ef48a1bac023f09c0be4c97fa2bc48176a | app-6a15c812a48c8191a0676030e4447bee@openai-curated-remote | openai-curated-remote | 1.0.0 | Taskaid AI | Satria Technologies Private Limited | 效率工具 | Manage tasks and plans |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://taskaid.ai/mcp |
-<!-- plugin-record:e46009a980f006bf35fa1a590e5774d0ad431add34b27413f97ebd7cfa11c0db -->
-| e46009a980f006bf35fa1a590e5774d0ad431add34b27413f97ebd7cfa11c0db | app-69ba263029ac81918336512fcaf6fcc5@openai-curated-remote | openai-curated-remote | 3.0.0 | SEPHORA | Sephora USA, Inc | 其他 | The best of beauty |  | AVAILABLE | AVAILABLE | ON_INSTALL |  |
+<!-- plugin-record:1dd53b9849510991f11ad12f17aee6be6875026b037650fbe943643cad066711 -->
+| 1dd53b9849510991f11ad12f17aee6be6875026b037650fbe943643cad066711 | app-69ba263029ac81918336512fcaf6fcc5@openai-curated-remote | openai-curated-remote | 4.0.0 | SEPHORA | Sephora USA, Inc | 其他 | The best of beauty |  | AVAILABLE | AVAILABLE | ON_INSTALL |  |
 <!-- plugin-record:f5737014f1b925382614a179cad79b68086a0705b44d7b33d2580833c3623024 -->
 | f5737014f1b925382614a179cad79b68086a0705b44d7b33d2580833c3623024 | app-695ce16201208191be7ae2d9a41411d8@openai-curated-remote | openai-curated-remote | 2.0.0 | FareHarbor | FareHarbor | 出行 | Find tours and activities |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://fareharbor.com/ |
 <!-- plugin-record:8882b2a8f7046317ef42913c31f138b1f2194bb570f71a192a67207830711e9c -->
@@ -3633,8 +3637,8 @@
 | 8ee8066b36679f0e56f90c3f553cd4431fb4429bce0e29233fa50f494332c0be | app-698c1e794a3481918fad0affa7757784@openai-curated-remote | openai-curated-remote | 2.0.0 | CarClever | Broekman Consulting Pty Ltd | 其他 | Find &amp; Buy Used Cars Smarter |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://getcarwise.app/ |
 <!-- plugin-record:0c4cced85aac3fb923dd938dcb63705455115f9eca9cc89496a34a14b7d70539 -->
 | 0c4cced85aac3fb923dd938dcb63705455115f9eca9cc89496a34a14b7d70539 | app-6a2432ff1a688191b169018245375da2@openai-curated-remote | openai-curated-remote | 1.0.0 | Career Adapter | Career Adapter LLC | 效率工具 | Tailor your resume to any job |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://www.careeradapter.ai/ |
-<!-- plugin-record:da0417a52baef523c3ff7c2f13ebb0f9a0239ec8f26df319f171d31e1492b509 -->
-| da0417a52baef523c3ff7c2f13ebb0f9a0239ec8f26df319f171d31e1492b509 | career-command-centre@openai-curated-remote | openai-curated-remote | 4.0.0-beta.2 | Career Centre | Amit Sharma | 效率工具 | Find roles. Build better CVs. | Research, Document Creation, Application Tracking, Scheduled Work | AVAILABLE | AVAILABLE | ON_INSTALL | https://hoplittlebunny.github.io/career-centre/ |
+<!-- plugin-record:c87a1288c7db8b7f50b910d5f9cdc0836da43e8f7c95e3c2b14cc6a908110646 -->
+| c87a1288c7db8b7f50b910d5f9cdc0836da43e8f7c95e3c2b14cc6a908110646 | career-command-centre@openai-curated-remote | openai-curated-remote | 4.0.0-beta.4 | Career Centre | Amit Sharma | 效率工具 | Find roles. Build better CVs. | Research, Document Creation, Application Tracking, Scheduled Work | AVAILABLE | AVAILABLE | ON_INSTALL | https://hoplittlebunny.github.io/career-centre/ |
 <!-- plugin-record:fb28f8ccdfb8a9e73d778f3177650189cda589f842a17dee9ac44918ea5edd18 -->
 | fb28f8ccdfb8a9e73d778f3177650189cda589f842a17dee9ac44918ea5edd18 | app-6a0b917cef048191b0dcb52920aa014a@openai-curated-remote | openai-curated-remote | 1.0.0 | Caretta | Caretta Inc. | 业务与运营 | Unlock your sales calls |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://caretta.so |
 <!-- plugin-record:026e30022980c9e2b236186ae162a2de6d1eaf68fb0b67710f429f19a3aedf12 -->
@@ -3651,8 +3655,8 @@
 | 2d2cdb018e79720f1e6d41e524f1d8d385b1ec0ce4499b970094946585fbb9d4 | app-6a1e0e4ef1dc8191acba31bd07b2a73e@openai-curated-remote | openai-curated-remote | 1.0.0 | Champfy | Victor Fria | 其他 | Find Tennis\|Pickleball partner |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://www.champfy.com |
 <!-- plugin-record:518d62b58b04b364ea0971bc9a852780e08f5c4989df806e457e5d6a02723522 -->
 | 518d62b58b04b364ea0971bc9a852780e08f5c4989df806e457e5d6a02723522 | app-6a20a8fd8acc819193b3864e24f7793d@openai-curated-remote | openai-curated-remote | 1.0.0 | Change.org: Start a Petition | Change.org, PBC | 创意 | Your cause deserves a voice |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://www.change.org/ |
-<!-- plugin-record:b9726b6cb2219e9d455659d69376ada904ec8b003c51640eb9c99ff49ef6bc50 -->
-| b9726b6cb2219e9d455659d69376ada904ec8b003c51640eb9c99ff49ef6bc50 | app-6a31190204b481919633d8e2f3dc18a6@openai-curated-remote | openai-curated-remote | 1.0.0 | ChartMogul | ChartMogul | 数据分析 | Revenue and growth insights |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://chartmogul.com/ |
+<!-- plugin-record:b176a3a30a9555ad92bb99af9115ed02db2a728d950ad6710211b16abe93c065 -->
+| b176a3a30a9555ad92bb99af9115ed02db2a728d950ad6710211b16abe93c065 | app-6a31190204b481919633d8e2f3dc18a6@openai-curated-remote | openai-curated-remote | 2.0.0 | ChartMogul | ChartMogul | 数据分析 | Revenue and growth insights |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://chartmogul.com/ |
 <!-- plugin-record:3f04462d8bc7262c8307337822646810ef2a53ab65158a3bb2ec8daf4bfbbe62 -->
 | 3f04462d8bc7262c8307337822646810ef2a53ab65158a3bb2ec8daf4bfbbe62 | app-6a260ccbce68819189d814e03106a38a@openai-curated-remote | openai-curated-remote | 2.0.0 | ChatData Sync | CGosmon Solutions LLC | 效率工具 | Track anything you describe |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://chatdatasync.com/ |
 <!-- plugin-record:46c22afcedf7752378ce6c25d9d9620f6c606aa0a86bdb6b488a78b08364e7db -->
@@ -3817,6 +3821,8 @@
 | e1076d298e064c1ce1257178ea3e94653fea2ca944ee33742afb2a8fb5279ead | app-6a27d8c19cd0819192c024710ccd05fc@openai-curated-remote | openai-curated-remote | 1.0.0 | Document360 | Integration360 Limited | 效率工具 | Manage knowledge base content |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://document360.com/ |
 <!-- plugin-record:eb2f4caf51fcb1c529822060348da0f5ee56c8587f114dfe4542a91a0278681e -->
 | eb2f4caf51fcb1c529822060348da0f5ee56c8587f114dfe4542a91a0278681e | app-6a3b5a966ce08191944c4b8f29ceebf5@openai-curated-remote | openai-curated-remote | 1.0.0 | Dominio Tech Delivery | DOMINIO TECH | 其他 | Peça comida pelo ChatGPT |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://dominio.tech |
+<!-- plugin-record:42aed913c7a8a5d6564f30f0e492d95f6ec57466eeb3765a66279d276e4f150c -->
+| 42aed913c7a8a5d6564f30f0e492d95f6ec57466eeb3765a66279d276e4f150c | app-6a3baa683dc4819189b77175a073cd98@openai-curated-remote | openai-curated-remote | 1.0.0 | DotSpark | Aravindh Rajendran | 效率工具 | Make your AI reason like you |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://www.dotspark.in |
 <!-- plugin-record:ec9da53717ccc0beb7d294d0d8a5b74081fa426ff6968ae88ea94735117a401c -->
 | ec9da53717ccc0beb7d294d0d8a5b74081fa426ff6968ae88ea94735117a401c | app-6a4d629a6d208191ae050b699e821285@openai-curated-remote | openai-curated-remote | 1.0.0 | Dover | Dover | 业务与运营 | Manage hiring on Dover |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://www.dover.com/ |
 <!-- plugin-record:668230da32d4d4d2ac63a7155b7c844d73e7fd507b035ba5e74999091f647255 -->
@@ -3989,8 +3995,8 @@
 | 495c4a39159e15a3b3bb1ce4343567cc8cf31a3625fc018cabcbeb30c07dab8c | app-69d36228525881918696e45540ca153b@openai-curated-remote | openai-curated-remote | 1.0.0 | Geekbot | Geekbot | 沟通协作 | Run standups and polls |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://geekbot.com |
 <!-- plugin-record:ce6d9de17e4ca23cb70f44e085f188540c4c6f758d22b1c7bfbd7040e0b63086 -->
 | ce6d9de17e4ca23cb70f44e085f188540c4c6f758d22b1c7bfbd7040e0b63086 | app-6a2ab57980b48191aaae2de40f06dcba@openai-curated-remote | openai-curated-remote | 1.0.0 | Gemba | Gemba Commerce | 业务与运营 | B2B sales insights |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://gembacommerce.com/ |
-<!-- plugin-record:c54022cbb925b0ae08b04fc68866b2532d73ef67a2538a259a379abb6d2385c6 -->
-| c54022cbb925b0ae08b04fc68866b2532d73ef67a2538a259a379abb6d2385c6 | app-6949c2fbf3ec8191aec510e433880031@openai-curated-remote | openai-curated-remote | 1.0.0 | Get My eSIM | Eric TUON | 出行 | Compare travel eSIMs |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://www.getmyesim.com/ |
+<!-- plugin-record:cc634febb4ad25e77ddcf19ee097efd3a7e03622c61fc3e6f7943e2d6a37d773 -->
+| cc634febb4ad25e77ddcf19ee097efd3a7e03622c61fc3e6f7943e2d6a37d773 | app-6949c2fbf3ec8191aec510e433880031@openai-curated-remote | openai-curated-remote | 2.0.0 | Get My eSIM | Eric TUON | 出行 | Compare travel eSIMs |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://www.getmyesim.com/ |
 <!-- plugin-record:0cd3163452deffe7f0fed387972d4b6d6cfaedfff92cd409eac4661c246510b8 -->
 | 0cd3163452deffe7f0fed387972d4b6d6cfaedfff92cd409eac4661c246510b8 | app-6a1173f02cd081919f2912a4f2b5964e@openai-curated-remote | openai-curated-remote | 1.0.0 | Getir | Getir | 其他 | delivery in minutes |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://getir.com |
 <!-- plugin-record:17fb8bf8c13224bfc4aef970b1b268915e2a1e1543d521bf2f020851cc082a31 -->
@@ -4149,6 +4155,8 @@
 | 1484e8dcceb7b9662c15a1c5d066b5f78a7798980fefd3e7f7c725f5d3f1178b | app-69d31de2c5c88191863aad8eca5a7e7d@openai-curated-remote | openai-curated-remote | 1.0.0 | Is It Legit by M8ven | M8ven Inc. | 安全 | Know who you are buying from |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://m8ven.ai |
 <!-- plugin-record:3f63fe7659ed1f10073eb725e3442f2fc0987783d9ebeb6d9ab31c0f77907333 -->
 | 3f63fe7659ed1f10073eb725e3442f2fc0987783d9ebeb6d9ab31c0f77907333 | app-695b033d7c888191a792484bc36b35ef@openai-curated-remote | openai-curated-remote | 1.0.0 | Is It Safe To Travel? | Layer 3 Labs | 出行 | Free real-time travel ratings |  | AVAILABLE | AVAILABLE | ON_INSTALL |  |
+<!-- plugin-record:b95217ec69564926332dc67972911f7d58be2075c28a1b8f2e4cca07cfc9b747 -->
+| b95217ec69564926332dc67972911f7d58be2075c28a1b8f2e4cca07cfc9b747 | app-6a259d81ab048191b479aaddf47d0276@openai-curated-remote | openai-curated-remote | 1.0.0 | iZap | iZap Labs | 业务与运营 | WhatsApp analytics and AI ops |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://izap.ai |
 <!-- plugin-record:74b014beaf14f5eb7ecba2d878758a5a78a677119f3f39d9eee9030263e9b296 -->
 | 74b014beaf14f5eb7ecba2d878758a5a78a677119f3f39d9eee9030263e9b296 | app-6a2a7f2cbb948191a603f3b9dea8e0f0@openai-curated-remote | openai-curated-remote | 1.0.0 | Jade Note | Unrealm LLC | 效率工具 | Editable memory layer |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://jadenote.app |
 <!-- plugin-record:b26d21e5ab26b7abefb13639300760a2fdcba08b660e7d1f95731b8759183ab9 -->
@@ -4177,6 +4185,8 @@
 | 07d0e0f82a4797b74a7ddbf4474ce7e146b04092c2f95fc1588816a204fd0792 | app-69cf72ca79288191be4f0ae99359ff67@openai-curated-remote | openai-curated-remote | 1.0.0 | JourneyBay | Roman Belov | 出行 | AI travel planner |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://journeybay.co/en/ |
 <!-- plugin-record:07e116f888793106b101d6cea026d760990acc6fa33b8c09f8f47b4fac4c325c -->
 | 07e116f888793106b101d6cea026d760990acc6fa33b8c09f8f47b4fac4c325c | app-69d6b47031808191927687c981a80340@openai-curated-remote | openai-curated-remote | 1.0.0 | Jumpseat | ALTITUTE PTE. LTD. | 出行 | Track upcoming flights |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://withjumpseat.com |
+<!-- plugin-record:60e2a7a7454ac0a608ec8f3b10889c53717f7feed3507022f9341a74dca12c9e -->
+| 60e2a7a7454ac0a608ec8f3b10889c53717f7feed3507022f9341a74dca12c9e | app-6a3ba5ef1c448191a4c89868b2688b7e@openai-curated-remote | openai-curated-remote | 1.0.0 | Juridata | JURIDATA SARL | 效率工具 | Search Moroccan law &amp; rulings |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://juridata.ma |
 <!-- plugin-record:3b2e9df65c3f2b6d8f45b650fef39961eaa9b52ae7ae19ba9e8cb90784b90aa1 -->
 | 3b2e9df65c3f2b6d8f45b650fef39961eaa9b52ae7ae19ba9e8cb90784b90aa1 | app-69cfabcbfe288191a30ae2015ab31ef3@openai-curated-remote | openai-curated-remote | 1.0.0 | Juspay Genius | Juspay Technologies Pvt. Ltd. | 金融 | Query payments and orders |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://juspay.io/ |
 <!-- plugin-record:53b000d0d9fdd38b2ec8b564fa40fbcc1690dcc844cb02a38611adc4dcc51dab -->
@@ -4479,6 +4489,8 @@
 | 97ea5b4d38fb8b44842c166d01234fdaac9904c1d0c46474f2c9b9725f762cb8 | app-696685b735588191b9f25f976cfda7b2@openai-curated-remote | openai-curated-remote | 1.0.0 | Photon Commerce | Photon Commerce | 金融 | Document AI OCR HITL Labeling |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://www.photoncommerce.com/ |
 <!-- plugin-record:dbe5ca99f1227ef1dd93a63896dc67347cd7c713d546a8551f3b0562ec97b2f0 -->
 | dbe5ca99f1227ef1dd93a63896dc67347cd7c713d546a8551f3b0562ec97b2f0 | app-6a37593da1d481918460edebfdc1a756@openai-curated-remote | openai-curated-remote | 1.0.0 | Piano 1024 | Kyung-Hoon Kim | 娱乐 | Play, Learn &amp; Quiz on Piano |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://mcp.piano1024.com |
+<!-- plugin-record:49c8f5fd6fc9919cdca505ab8a613569ab3553e3dd3a2b24effae31db7f4a4e2 -->
+| 49c8f5fd6fc9919cdca505ab8a613569ab3553e3dd3a2b24effae31db7f4a4e2 | app-69610ef30e448191aed57cd6074249a3@openai-curated-remote | openai-curated-remote | 1.0.0 | Pick your match | GauVendi GmbH | 出行 | Find your exact accommodation |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://pickyourmatch.com |
 <!-- plugin-record:16dffd030472ff57463287792b9562896be6265db9428a682d119206a78113b6 -->
 | 16dffd030472ff57463287792b9562896be6265db9428a682d119206a78113b6 | app-69fe28c7b668819198e19fbac2783d2f@openai-curated-remote | openai-curated-remote | 2.0.0 | PicPay | PicPay | 金融 | Sua vida com mais pique |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://picpay.com |
 <!-- plugin-record:3dc723fda25f3ec3247c6bff40931cb48b9effff22e03ae53444128013e191cc -->
@@ -4687,6 +4699,8 @@
 | 21fc23c21a23d21ef611a0dba411b6eb13930016d5a302c96c8c23477982599f | app-69e3524ce59081918fa3a92641e453ca@openai-curated-remote | openai-curated-remote | 1.0.0 | Simply-Wedding | TeSi-Solutions | 其他 | Heiraten leicht gemacht |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://simply-wedding.de/ |
 <!-- plugin-record:f58843b08887c5c14621a5b1175d61e6b3700de1859d7d01d26d4a9d612e8d12 -->
 | f58843b08887c5c14621a5b1175d61e6b3700de1859d7d01d26d4a9d612e8d12 | app-69774b4c8e888191b409567d00e2152a@openai-curated-remote | openai-curated-remote | 1.0.0 | Simsurf | Global Impact Finance SA | 出行 | Find travel eSIMs |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://www.simsurf.com |
+<!-- plugin-record:d8353f57e4687eaf48eebd854cf7aa3b1891ea23a0bbba54582cc09b5481a760 -->
+| d8353f57e4687eaf48eebd854cf7aa3b1891ea23a0bbba54582cc09b5481a760 | app-6a463643f0ac8191828c01f481e1d3ea@openai-curated-remote | openai-curated-remote | 1.0.0 | SiteGuru | SiteGuru.co | 业务与运营 | Improve your site's SEO |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://www.siteguru.co |
 <!-- plugin-record:013b701dc6050ca3272cb5e425503b68f2a800ca367d699402b58d731f34b02f -->
 | 013b701dc6050ca3272cb5e425503b68f2a800ca367d699402b58d731f34b02f | app-696f2f3f51a08191a78ce6b15ddfa118@openai-curated-remote | openai-curated-remote | 2.0.0 | Sitemate | Sitemate Technologies | 业务与运营 | Interact with Sitemate data |  | AVAILABLE | AVAILABLE | ON_INSTALL | https://sitemate.com/ |
 <!-- plugin-record:e67bbc8f176833cc061f2f6d65e1434c855e6d5f1378e4e46927e7daf284bf43 -->

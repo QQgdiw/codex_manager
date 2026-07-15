@@ -8,6 +8,7 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
 import {
+  collectCodexVersion,
   collectPluginCatalog,
   pluginRecordKey,
   renderPluginsMarket,
@@ -223,6 +224,7 @@ async function writeFakeCodexCmdShim(directory, result) {
   const serverPath = join(directory, 'app-server');
   const commandPath = join(directory, 'codex.cmd');
   const server = [
+    "if (process.argv.includes('--version')) { console.log('codex-cli fake-codex-1.0.0'); process.exit(0); }",
     "let input = '';",
     "process.stdin.setEncoding('utf8');",
     "process.stdin.on('data', (chunk) => {",
@@ -473,6 +475,80 @@ test('accepts Codex response envelopes that omit jsonrpc', async () => {
   assert.deepEqual(catalog, validatePluginListResult(emptyCatalog));
 });
 
+test('preserves the Codex version from the initialize response', async () => {
+  const catalog = await collectFromResponses(
+    { id: 1, result: { serverInfo: { name: 'fake', version: '0.144.1' } } },
+    { id: 2, result: { marketplaces: [], marketplaceLoadErrors: [] } },
+  );
+  assert.equal(catalog.codexVersion, '0.144.1');
+});
+
+test('terminates the Codex version process after a timeout', async () => {
+  const child = createFakeChild();
+  await assert.rejects(
+    collectCodexVersion({
+      codexCommand: 'codex',
+      cwd: 'E:/fixture',
+      timeoutMs: 5,
+      spawnImpl: () => child,
+    }),
+    /codex_version_timeout/,
+  );
+  assert.equal(child.killed, true);
+});
+
+test('terminates the Codex version process after excessive output', async () => {
+  const child = createFakeChild();
+  const result = collectCodexVersion({
+    codexCommand: 'codex',
+    cwd: 'E:/fixture',
+    spawnImpl: () => child,
+  });
+  child.stdout.write('x'.repeat(4097));
+  await assert.rejects(result, /codex_version_output_too_large/);
+  assert.equal(child.killed, true);
+  assert.equal(child.stdout.listenerCount('data'), 0);
+});
+
+test('reports a Codex version process cleanup failure', async () => {
+  const child = createFakeChild();
+  await assert.rejects(
+    collectCodexVersion({
+      codexCommand: 'codex',
+      cwd: 'E:/fixture',
+      timeoutMs: 5,
+      spawnImpl: () => child,
+      terminateImpl: async () => { throw new Error('termination denied'); },
+    }),
+    /codex_version_cleanup_failed.*termination denied/,
+  );
+});
+
+test('terminates a hanging Windows cmd shim and its child process', { skip: process.platform !== 'win32' }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'plugin-version-cleanup-'));
+  const pidPath = join(directory, 'child.pid');
+  try {
+    const serverPath = join(directory, 'app-server');
+    const commandPath = join(directory, 'codex.cmd');
+    await writeFile(serverPath, [
+      "const { writeFileSync } = require('node:fs');",
+      `writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
+      'setInterval(() => {}, 1000);',
+    ].join('\n'), 'utf8');
+    await writeFile(commandPath, `@echo off\r\n"${process.execPath}" "%~dp0app-server" %*\r\n`, 'utf8');
+
+    await assert.rejects(
+      collectCodexVersion({ codexCommand: commandPath, cwd: directory, timeoutMs: 1_000 }),
+      /codex_version_timeout/,
+    );
+    const childPid = Number(await readFile(pidPath, 'utf8'));
+    assert.throws(() => process.kill(childPid, 0), /ESRCH|not found|no such process/i);
+  }
+  finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('CLI leaves a previous document untouched after collection failure', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'plugin-catalog-'));
   try {
@@ -501,6 +577,7 @@ test('CLI runs a Windows cmd shim with spaces as a real child process without de
     assert.equal(result.code, 0, result.stderr);
     assert.doesNotMatch(result.stderr, /DEP0190/);
     assert.match(await readFile(outputPath, 'utf8'), /原始记录数：3/);
+    assert.match(await readFile(outputPath, 'utf8'), /Codex 版本：codex-cli fake-codex-1\.0\.0/);
   }
   finally {
     await rm(directory, { recursive: true, force: true });

@@ -3,7 +3,7 @@ import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { collectPluginCatalog, renderPluginsMarket } from './plugin-catalog.mjs';
+import { collectCodexVersion, collectPluginCatalog, renderPluginsMarket } from './plugin-catalog.mjs';
 
 function usageError(message) {
   const error = new Error(message);
@@ -74,8 +74,13 @@ export async function runCli(argv = process.argv.slice(2)) {
       codexCommand: options.codexCommand,
       cwd: options.cwd,
     });
+    const codexVersion = catalog.codexVersion ?? await collectCodexVersion({
+      codexCommand: options.codexCommand,
+      cwd: options.cwd,
+    });
     document = renderPluginsMarket(catalog, {
       collectedAt: new Date().toISOString(),
+      codexVersion,
     });
   }
   catch (error) {

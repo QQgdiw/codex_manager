@@ -4,6 +4,7 @@ import { extname } from 'node:path';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const APP_SERVER_ARGS = Object.freeze(['app-server', '--stdio']);
+const VERSION_ARGS = Object.freeze(['--version']);
 const CMD_SHIM_UNSAFE_CHARACTERS = /[\r\n"&|<>()^%!]/;
 
 function isObject(value) {
@@ -39,14 +40,15 @@ function quoteCmdShimPath(commandPath) {
   return `"${commandPath}"`;
 }
 
-function codexSpawnInvocation(codexCommand, cwd) {
+function codexSpawnInvocation(codexCommand, cwd, args = APP_SERVER_ARGS) {
   const options = {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   };
   if (process.platform !== 'win32') {
-    return { command: codexCommand, args: APP_SERVER_ARGS, options };
+    if (args === VERSION_ARGS) options.detached = true;
+    return { command: codexCommand, args, options };
   }
 
   const extension = extname(codexCommand).toLowerCase();
@@ -55,14 +57,125 @@ function codexSpawnInvocation(codexCommand, cwd) {
   }
   if (codexCommand === 'codex' || extension === '.cmd' || extension === '.bat') {
     const shimPath = codexCommand === 'codex' ? 'codex.cmd' : codexCommand;
-    const commandLine = `"${quoteCmdShimPath(shimPath)} app-server --stdio"`;
+    const commandLine = `"${quoteCmdShimPath(shimPath)} ${args.join(' ')}"`;
     return {
       command: process.env.ComSpec ?? 'cmd.exe',
       args: ['/d', '/v:off', '/s', '/c', commandLine],
       options: { ...options, windowsVerbatimArguments: true },
     };
   }
-  return { command: codexCommand, args: APP_SERVER_ARGS, options };
+  return { command: codexCommand, args, options };
+}
+
+async function terminateVersionProcessTree(child) {
+  if (!child || child.exitCode != null) return;
+  if (process.platform === 'win32' && Number.isInteger(child.pid)) {
+    await new Promise((resolveTermination, rejectTermination) => {
+      let killer;
+      try {
+        killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+      }
+      catch (error) {
+        child.kill();
+        rejectTermination(error);
+        return;
+      }
+      let finished = false;
+      const finishTermination = (error) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        if (error) {
+          child.kill();
+          rejectTermination(error);
+        }
+        else resolveTermination();
+      };
+      const timer = setTimeout(() => {
+        killer.kill();
+        finishTermination(new Error('taskkill_timeout'));
+      }, 5_000);
+      killer.once('error', (error) => finishTermination(error));
+      killer.once('close', (code) => finishTermination(
+        code === 0 ? null : new Error(`taskkill_failed:${code}`),
+      ));
+    });
+    return;
+  }
+  if (process.platform !== 'win32' && Number.isInteger(child.pid)) {
+    try {
+      process.kill(-child.pid, 'SIGTERM');
+      return;
+    }
+    catch {}
+  }
+  child.kill();
+}
+
+export function collectCodexVersion({
+  codexCommand = 'codex',
+  cwd,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  spawnImpl = spawn,
+  terminateImpl = terminateVersionProcessTree,
+} = {}) {
+  return new Promise((resolve, reject) => {
+    let child;
+    let onStdout;
+    let settled = false;
+    let stdout = '';
+    const finish = (error, version) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (child?.stdout && onStdout) child.stdout.off('data', onStdout);
+      if (!error) {
+        resolve(version);
+        return;
+      }
+      terminateImpl(child).then(
+        () => reject(error),
+        (cleanupError) => reject(new Error(
+          `codex_version_cleanup_failed:${cleanupError.message}`,
+          { cause: error },
+        )),
+      );
+    };
+    const timer = setTimeout(() => finish(new Error('codex_version_timeout')), timeoutMs);
+
+    try {
+      const invocation = codexSpawnInvocation(codexCommand, cwd, VERSION_ARGS);
+      child = spawnImpl(invocation.command, invocation.args, invocation.options);
+    }
+    catch (error) {
+      finish(error);
+      return;
+    }
+    child.once('error', (error) => finish(error));
+    child.stdout.setEncoding('utf8');
+    onStdout = (chunk) => {
+      stdout += chunk;
+      if (stdout.length > 4096) finish(new Error('codex_version_output_too_large'));
+    };
+    child.stdout.on('data', onStdout);
+    child.stderr?.resume();
+    child.stdin?.end();
+    child.once('close', (code) => {
+      if (code !== 0) {
+        finish(new Error(`codex_version_failed:${code}`));
+        return;
+      }
+      const version = stdout.trim().split(/\r?\n/, 1)[0];
+      if (!version) {
+        finish(new Error('codex_version_empty'));
+        return;
+      }
+      finish(null, version);
+    });
+  });
 }
 
 function marketplaceNameOf(marketplace) {
@@ -325,6 +438,7 @@ export function collectPluginCatalog({
     let settled = false;
     let buffer = '';
     let initialized = false;
+    let codexVersion;
     let initializeRequestSent = false;
     let pluginListRequestSent = false;
     const finish = (error, catalog) => {
@@ -406,6 +520,10 @@ export function collectPluginCatalog({
               finish(new Error('invalid JSON-RPC response for request 1'));
               continue;
             }
+            if (typeof message.result.serverInfo?.version === 'string'
+              && message.result.serverInfo.version.trim().length > 0) {
+              codexVersion = message.result.serverInfo.version.trim();
+            }
             initialized = true;
             send({ method: 'initialized', params: {} });
             sendRequest({ id: 2, method: 'plugin/list', params: { cwds: [cwd] } });
@@ -416,7 +534,8 @@ export function collectPluginCatalog({
               continue;
             }
             try {
-              finish(null, validatePluginListResult(message.result));
+              const catalog = validatePluginListResult(message.result);
+              finish(null, codexVersion ? { ...catalog, codexVersion } : catalog);
             }
             catch {
               finish(new Error('plugin catalog plugin/list result is invalid'));
