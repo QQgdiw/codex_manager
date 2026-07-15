@@ -8,7 +8,7 @@
 
 首期基础闭环已经完成端到端验收。正式需求和计划分别位于 `Resources/PRD.md` 与 `Resources/PP.md`；资源市场、白名单、审批辅助表、六类场景配置、PowerShell 管理入口、DPAPI 凭据、受管回滚、dry-run 部署和分层验证记录均已建立。
 
-2026-07-15 已进入市场文档质量审计与整理阶段，重点覆盖 `plugins_market.md`、`github_market.md`、`MCP_market.md` 和 `tool_market.md`。当前环境的 Plugins 完整目录必须以 app-server `plugin/list` 为准；旧 `openai/plugins.git` 和 `codex plugin list` 只覆盖不同范围的 snapshot，不能继续作为 `/plugins` 完整清单。用户已审阅并确认设计与实施计划。Task 1 已完成 Plugins 目录采集器、真实 Codex app-server envelope 兼容、Windows npm shim 安全启动和严格请求生命周期验证；Task 2 已更新 PRD、PP、GUIDE 和历史设计边界，并建立可阻止旧来源回退的合同测试。四份市场正文尚未改写。
+2026-07-15 已进入市场文档质量审计与整理阶段，重点覆盖 `plugins_market.md`、`github_market.md`、`MCP_market.md` 和 `tool_market.md`。当前环境的 Plugins 完整目录必须以 app-server `plugin/list` 为准；旧 `openai/plugins.git` 和 `codex plugin list` 只覆盖不同范围的 snapshot，不能继续作为 `/plugins` 完整清单。用户已审阅并确认设计与实施计划。Task 1 已完成 Plugins 目录采集器、真实 Codex app-server envelope 兼容、Windows npm shim 安全启动、严格请求生命周期验证，以及对真实 `plugin.interface` 嵌套元数据和研发者重点索引的渲染；Task 2 已更新 PRD、PP、GUIDE 和历史设计边界，并建立可阻止旧来源回退的合同测试。2026-07-15 的临时真实采集得到 1 个 marketplace、2,033 条记录，五类重点索引均已生成；四份市场正文尚未改写。
 
 2026-06-25 已完成市场与审批强化：`Resources/approval_review.toml` 和 `Resources/approval_review.md` 提供面向后续可视化的审批辅助数据；`Resources/plugins_market.md` 已按本地缓存、CLI 和 GitHub `openai/plugins` 来源重建；`Resources/github_market.md` 已扩展为 2026-W01 至 2026-W26 的工程候选池，并记录 `stars >= 1000`、近似回溯、跨周去重和候选不足周；`Resources/event_market.md` 已从泛 AI 行业事件改为工程工作流事件市场。
 

@@ -1,5 +1,11 @@
 # 项目关键记录
 
+## 2026-07-15：Plugins 真实 interface 元数据
+
+- app-server `plugin/list` 的展示名称、简述、开发者、类别、能力和网站等字段位于 `plugin.interface`，不能只读取顶层、manifest 或 metadata。
+- 上游类别使用 `Developer Tools`、`Data & Analytics`、`Productivity`、`Communication` 等多词值；类别映射必须支持精确值，重点索引再结合插件标识、关键词和描述分组。
+- 目录会随当前 Codex 环境变化；本次临时真实采集返回 1 个 marketplace、2,033 条记录。该数量只能作为本次采集证据，不能固化为后续成功阈值。
+
 ## 2026-06-13：Task 1 测试入口审查修复
 
 - 审查确认原基线中的 `2 + 2` 断言不能证明测试入口行为，已删除。

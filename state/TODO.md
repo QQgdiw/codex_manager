@@ -1,6 +1,6 @@
 # 项目任务状态
 
-> **更新时间**：2026-07-14
+> **更新时间**：2026-07-15
 
 ## 当前任务：市场文档质量审计与整理
 
@@ -12,6 +12,7 @@
 - [x] 编写详细实施计划 `docs/superpowers/plans/2026-07-14-market-document-quality-audit.md`。
 - [x] Task 1：实现 Plugins 目录采集器和完整性验证器；Node 10/10、Pester unit 308/308 通过。
 - [x] Task 1 兼容性修复：真实 Codex envelope、Windows npm `.cmd` shim 和 `--throw-deprecation` 回归验证通过；Node 15/15、Pester unit 310/310。
+- [x] Task 1 元数据修复：读取真实 `plugin.interface` 嵌套字段并生成五类研发者重点索引；Node 16/16、Pester unit 310/310，临时真实采集为 2,033 条记录。
 - [x] Task 2：更新正式需求、计划、GUIDE 和旧设计边界；合同探针预期失败，正常 unit 310/310 通过。
 - [ ] Task 3：使用真实 `plugin/list` 生成并审阅完整 `plugins_market.md`。
 - [ ] 执行四份市场文档及相关需求、计划和生成规则的整理。
