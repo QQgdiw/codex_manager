@@ -63,7 +63,7 @@ export function renderGitHubMarketArchive({ records, capturedAt, partialWeeks = 
   const lines = ['# GitHub 研发项目市场', '', `> 采集与审阅时间：${capturedAt}`, '> 历史候选为近似回溯，不代表对应周的精确 Trending 排名或历史 Star。', ''];
   for (const week of weeks) {
     const all = records.filter((record) => record.week === week); const keep = checked.kept.filter((record) => record.week === week);
-    lines.push(`### ${week}`, '', `- 原始候选：${all.length}` , `- 保留：${keep.length}`, `- 排除：${all.filter((record) => record.decision === 'exclude').length}`);
+    lines.push(`## ${week}`, '', `- 原始候选：${all.length}` , `- 保留：${keep.length}`, `- 排除：${all.filter((record) => record.decision === 'exclude').length}`);
     if (keep.length < 20) lines.push(`- 候选不足：保留 ${keep.length} 条，不降低 Star 门槛补足。`);
     if (partialWeeks.includes(week)) lines.push('- 周次状态：截至采集日的部分周数据。');
     lines.push('');

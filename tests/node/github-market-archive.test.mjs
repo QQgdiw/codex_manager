@@ -110,7 +110,7 @@ test('renders W29 as a partial week with complete Chinese fields and a valid git
     partialWeeks: ['2026-W29'],
   });
 
-  assert.match(document, /### 2026-W29/);
+  assert.match(document, /## 2026-W29/);
   assert.match(document, /截至采集日的部分周/);
   assert.match(document, /- 风险：需要审查第三方依赖与权限。/);
   assert.match(document, /### owner\/w29\n<!-- github-record:/);
@@ -126,7 +126,7 @@ test('renders a partial week even when it has no candidates', () => {
     partialWeeks: ['2026-W29'],
   });
 
-  assert.match(document, /### 2026-W29/);
+  assert.match(document, /## 2026-W29/);
   assert.match(document, /- 原始候选：0/);
   assert.match(document, /截至采集日的部分周数据/);
 });
