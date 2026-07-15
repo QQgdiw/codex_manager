@@ -155,6 +155,20 @@ Describe 'Market scripts' {
         $exitCode | Should Be 0
     }
 
+    It 'runs the GitHub market Node tests' {
+        $repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        $testPath = Join-Path $repositoryRoot 'tests\node\github-market.test.mjs'
+        $output = & node --test $testPath 2>&1
+        $exitCode = $LASTEXITCODE
+
+        if ($exitCode -ne 0) {
+            $tail = @($output | Select-Object -Last 20) -join [Environment]::NewLine
+            throw "GitHub market Node tests failed with exit code $exitCode`n$tail"
+        }
+
+        $exitCode | Should Be 0
+    }
+
     It 'keeps the complete Plugins market source contract current' {
         $repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
         $documents = Get-PluginMarketContractDocuments -RepositoryRoot $repositoryRoot
