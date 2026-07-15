@@ -359,14 +359,17 @@ test('CLI leaves a previous document untouched after collection failure', async 
   }
 });
 
-test('CLI runs a Windows cmd shim app server as a real child process', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'plugin-catalog-'));
+test('CLI runs a Windows cmd shim with spaces as a real child process without deprecation warnings', { skip: process.platform !== 'win32' }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'plugin catalog-'));
   try {
     const outputPath = join(directory, 'plugins_market.md');
     const commandPath = await writeFakeCodexCmdShim(directory, fixtureResult);
     const cliPath = join(process.cwd(), 'scripts', 'markets', 'export-plugins-market.mjs');
-    const result = await run(process.execPath, [cliPath, '--cwd', directory, '--output', outputPath, '--codex-command', commandPath]);
+    const result = await run(process.execPath, [cliPath, '--cwd', directory, '--output', outputPath, '--codex-command', commandPath], {
+      env: { ...process.env, NODE_OPTIONS: '--throw-deprecation' },
+    });
     assert.equal(result.code, 0, result.stderr);
+    assert.doesNotMatch(result.stderr, /DEP0190/);
     assert.match(await readFile(outputPath, 'utf8'), /原始记录数：3/);
   }
   finally {
@@ -374,14 +377,11 @@ test('CLI runs a Windows cmd shim app server as a real child process', async () 
   }
 });
 
-test('uses the configured ComSpec shell for Windows cmd shims', async () => {
-  if (process.platform !== 'win32') {
-    return;
-  }
+test('uses ComSpec directly with a quoted cmd shim and fixed app-server arguments', { skip: process.platform !== 'win32' }, async () => {
   const child = createFakeChild();
   let received;
   const catalog = await collectPluginCatalog({
-    codexCommand: 'C:/fixture/codex.cmd',
+    codexCommand: 'C:/fixture/codex shim.cmd',
     cwd: 'C:/fixture',
     spawnImpl(command, args, options) {
       received = { command, args, options };
@@ -392,16 +392,30 @@ test('uses the configured ComSpec shell for Windows cmd shims', async () => {
       return child;
     },
   });
-  assert.equal(received.command, 'C:/fixture/codex.cmd');
-  assert.deepEqual(received.args, ['app-server', '--stdio']);
-  assert.equal(received.options.shell, process.env.ComSpec ?? 'cmd.exe');
+  assert.equal(received.command, process.env.ComSpec ?? 'cmd.exe');
+  assert.deepEqual(received.args, ['/d', '/v:off', '/s', '/c', '""C:/fixture/codex shim.cmd" app-server --stdio"']);
+  assert.equal(Object.hasOwn(received.options, 'shell'), false);
+  assert.equal(received.options.windowsVerbatimArguments, true);
   assert.deepEqual(catalog, validatePluginListResult({ marketplaces: [], marketplaceLoadErrors: [] }));
 });
 
-test('rejects PowerShell commands instead of treating them as native executables', async () => {
-  if (process.platform !== 'win32') {
-    return;
-  }
+test('rejects explicit cmd shim paths containing cmd metacharacters', { skip: process.platform !== 'win32' }, async () => {
+  let spawned = false;
+  await assert.rejects(
+    () => collectPluginCatalog({
+      codexCommand: 'C:/fixture/codex&unsafe.cmd',
+      cwd: 'C:/fixture',
+      spawnImpl() {
+        spawned = true;
+        return createFakeChild();
+      },
+    }),
+    /unsafe cmd shim path/i,
+  );
+  assert.equal(spawned, false);
+});
+
+test('rejects PowerShell commands instead of treating them as native executables', { skip: process.platform !== 'win32' }, async () => {
   let spawned = false;
   await assert.rejects(
     () => collectPluginCatalog({

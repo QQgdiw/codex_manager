@@ -4,6 +4,7 @@ import { extname } from 'node:path';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const APP_SERVER_ARGS = Object.freeze(['app-server', '--stdio']);
+const CMD_SHIM_UNSAFE_CHARACTERS = /[\r\n"&|<>()^%!]/;
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -31,14 +32,21 @@ function validateJsonRpcResponse(message, requestId) {
   return message;
 }
 
-function codexSpawnOptions(codexCommand, cwd) {
+function quoteCmdShimPath(commandPath) {
+  if (CMD_SHIM_UNSAFE_CHARACTERS.test(commandPath)) {
+    throw new Error('unsafe cmd shim path');
+  }
+  return `"${commandPath}"`;
+}
+
+function codexSpawnInvocation(codexCommand, cwd) {
   const options = {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   };
   if (process.platform !== 'win32') {
-    return options;
+    return { command: codexCommand, args: APP_SERVER_ARGS, options };
   }
 
   const extension = extname(codexCommand).toLowerCase();
@@ -46,9 +54,15 @@ function codexSpawnOptions(codexCommand, cwd) {
     throw new Error('PowerShell commands are not supported for the Codex app server');
   }
   if (codexCommand === 'codex' || extension === '.cmd' || extension === '.bat') {
-    return { ...options, shell: process.env.ComSpec ?? 'cmd.exe' };
+    const shimPath = codexCommand === 'codex' ? 'codex.cmd' : codexCommand;
+    const commandLine = `"${quoteCmdShimPath(shimPath)} app-server --stdio"`;
+    return {
+      command: process.env.ComSpec ?? 'cmd.exe',
+      args: ['/d', '/v:off', '/s', '/c', commandLine],
+      options: { ...options, windowsVerbatimArguments: true },
+    };
   }
-  return options;
+  return { command: codexCommand, args: APP_SERVER_ARGS, options };
 }
 
 function marketplaceNameOf(marketplace) {
@@ -292,7 +306,8 @@ export function collectPluginCatalog({
     const timer = setTimeout(() => finish(new Error('plugin_catalog_timeout')), timeoutMs);
 
     try {
-      child = spawnImpl(codexCommand, APP_SERVER_ARGS, codexSpawnOptions(codexCommand, cwd));
+      const invocation = codexSpawnInvocation(codexCommand, cwd);
+      child = spawnImpl(invocation.command, invocation.args, invocation.options);
       child.once('error', (error) => finish(error));
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk) => {
