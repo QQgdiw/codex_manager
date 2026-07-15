@@ -1,5 +1,11 @@
 # 项目关键记录
 
+## 2026-07-15：Plugins 目录正式重建
+
+- 正式文档由同次 app-server `plugin/list` 原子生成，包含 2,034 条记录和 1,047 条重点索引；每条重点索引均携带完整清单中的 `recordKey`，用于区分同一插件 ID 的上游重复记录。
+- 本次响应中 `metabase@openai-curated-remote` 保留两条版本、可用状态不同的记录，不能按插件 ID 去重。
+- `tests/Run-Tests.ps1 -Unit` 的完整运行时间受当前机器负载影响较大；本次通过运行耗时约 197 秒、310 通过且 0 失败。外层自动化超时应预留至少 300 秒，不能把 120 或 240 秒的外层中止误报为测试失败。
+
 ## 2026-07-15：Plugins 真实 interface 元数据
 
 - app-server `plugin/list` 的展示名称、简述、开发者、类别、能力和网站等字段位于 `plugin.interface`，不能只读取顶层、manifest 或 metadata。
