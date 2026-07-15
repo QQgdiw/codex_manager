@@ -51,6 +51,17 @@ test('extracts GitHub candidates from weekly legacy tables and preserves escaped
   ]);
 });
 
+test('uses the Stars column instead of a legacy table row number', () => {
+  const candidates = extractLegacyCandidates([
+    '### 2026-W01',
+    '| # | Repository | Stars | Date field |',
+    '| ---: | --- | ---: | --- |',
+    '| 1 | [owner/first](https://github.com/owner/first) | 1,234 | created_at |',
+  ].join('\n'));
+
+  assert.deepEqual(candidates, [{ week: '2026-W01', repository: 'owner/first', stars: 1234 }]);
+});
+
 test('reports line numbers for invalid legacy GitHub table rows', () => {
   assert.throws(
     () => extractLegacyCandidates([

@@ -14,14 +14,17 @@ function error(message) { const result = new Error(message); result.exitCode = 2
 export function extractLegacyCandidates(markdown) {
   const candidates = [];
   let week = null;
+  let starsColumn = -1;
   for (const [index, line] of markdown.split(/\r?\n/).entries()) {
     const heading = /^###\s+(\d{4}-W\d{2})\s*$/.exec(line);
-    if (heading) { week = heading[1]; continue; }
+    if (heading) { week = heading[1]; starsColumn = -1; continue; }
     if (!week || !line.startsWith('|') || /^\|\s*-/.test(line)) continue;
+    const cells = splitRow(line);
+    const headerIndex = cells.findIndex((cell) => cell.toLowerCase() === 'stars');
+    if (headerIndex >= 0) { starsColumn = headerIndex; continue; }
     const match = /\[([^\]]+\/[^\]]+)\]\(https:\/\/github\.com\/[^)]+\)/.exec(line);
     if (!match) continue;
-    const cells = splitRow(line);
-    const starCell = cells.find((cell) => /^\d[\d,]*$/.test(cell)) ?? cells.find((cell) => /unknown/i.test(cell));
+    const starCell = starsColumn >= 0 ? cells[starsColumn] : (cells.find((cell) => /^\d[\d,]*$/.test(cell)) ?? cells.find((cell) => /unknown/i.test(cell)));
     const stars = Number(String(starCell ?? '').replace(/,/g, ''));
     if (!Number.isInteger(stars)) throw new Error(`line ${index + 1}: invalid stars`);
     candidates.push({ week, repository: match[1].replace(/\/$/, ''), stars });
