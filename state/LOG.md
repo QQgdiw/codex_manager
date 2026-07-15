@@ -230,3 +230,11 @@
 - 两份 2026-06-25 历史设计/计划仅增加被新设计取代的提示，历史正文未改写。
 - 首轮审查发现合同测试只匹配孤立关键词，不能阻止旧来源回退。修复后，同一验证器既检查真实文档，也检查故意违规的内存样本。
 - 独立验证：违规探针按预期退出 1，并指出 `codex plugin list` 完整目录替代违规；正常 Pester unit 为 310 passed / 0 failed。
+
+## 2026-07-15：Task 1 真实 Codex app-server 兼容性修复
+
+- Task 3 首次真实采集发现 Windows 默认 `codex` shim 无法被 Node 直接 spawn，且真实 app-server 成功响应没有 `jsonrpc` 字段。Codex 0.144.1 生成的 response/error schema 也确认该字段不是必需项。
+- 响应校验改为允许缺失 `jsonrpc`，若字段存在则必须为 `2.0`；仍严格要求 result/error 互斥、错误对象 code/message、请求顺序、无效结果失败关闭和不覆盖输出。
+- Windows `.cmd/.bat` shim 改由受控 `cmd.exe` 直接启动，固定 `/d /v:off /s /c` 与 `app-server --stdio` 参数；拒绝换行、引号和 cmd 元字符路径。未使用 Node `shell` 选项，避免 `DEP0190` 安全弃用警告。
+- 一度误提交 `.superpowers/sdd/task-1-report.md`；后续仅取消 Git 跟踪并保留本地 ignored 报告，最终净差异不再包含 `.superpowers/`。
+- 独立验证：`NODE_OPTIONS=--throw-deprecation` 下 Node 15 passed / 0 failed；Pester unit 310 passed / 0 failed；默认真实采集成功生成临时目录文档。
