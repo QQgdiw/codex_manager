@@ -301,6 +301,20 @@ test('rejects malformed, expanded, and mismatched event markers instead of skipp
   assert.match(validateEventDocument(changedCount, coverage).errors.join('\n'), /header record count does not match event headings/);
 });
 
+test('requires every event anchor exactly once in the topic index and binds body titles without it', () => {
+  const valid = renderEventMarket([validRecord()], { ...coverage, verifiedAt: '2026-07-18' });
+  const topicLink = '- [2026-01-01｜Codex workflow update｜OpenAI](#event-openai-codex-workflow-2026)';
+  const missingAndTampered = valid
+    .replace('### Codex workflow update', '### Tampered title')
+    .replace(`${topicLink}\n`, '');
+  const duplicate = valid.replace(topicLink, `${topicLink}\n${topicLink}`);
+
+  const missingErrors = validateEventDocument(missingAndTampered, coverage).errors.join('\n');
+  assert.match(missingErrors, /body event title is not bound to its marker/);
+  assert.match(missingErrors, /event anchor must be referenced exactly once in topic index/);
+  assert.match(validateEventDocument(duplicate, coverage).errors.join('\n'), /event anchor must be referenced exactly once in topic index/);
+});
+
 test('rejects input and output aliases by case, symlink, and hardlink identity', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'event-market-'));
   const input = join(directory, 'curation.jsonl');

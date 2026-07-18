@@ -208,7 +208,7 @@ export function renderEventMarket(records, metadata = {}) {
   ];
   for (const topic of TOPICS) lines.push(`- [${escapeMarkdownText(TOPIC_LABELS[topic])}](#topic-${topic})`);
   for (const topic of TOPICS) {
-    const topicRecords = sortRecords(checked.kept.filter((record) => record.topics.includes(topic)));
+    const topicRecords = sortRecords(checked.kept.filter((record) => record.topics[0] === topic));
     lines.push('', `<a id="topic-${topic}"></a>`, `**${escapeMarkdownText(TOPIC_LABELS[topic])}**`);
     if (!topicRecords.length) lines.push('- 暂无通过复核的事件。');
     for (const record of topicRecords) lines.push(`- [${topicIndexLabel(record)}](#${eventAnchor(record.id)})`);
@@ -223,6 +223,7 @@ export function renderEventMarket(records, metadata = {}) {
         recordMarker(record),
         '',
         `- 日期：${record.date}`,
+        `- 标题：${escapeMarkdownText(record.title)}`,
         `- 优先级：${record.priority}`,
         `- 主题：${record.topics.map((topic) => escapeMarkdownText(TOPIC_LABELS[topic])).join('、')}`,
         `- 协作方：${record.partners.length ? record.partners.map(escapeMarkdownText).join('、') : '无'}`,
@@ -318,6 +319,7 @@ export function validateEventDocument(markdown, options = {}) {
       const nextHeading = lines.findIndex((line, lineIndex) => lineIndex > index && /^#{2,3}\s+/.test(line));
       const eventLines = lines.slice(index + 1, nextHeading < 0 ? undefined : nextHeading);
       if (!eventLines.includes(`- 日期：${record.date}`)) errors.push(`${record.id}: body date does not match marker`);
+      if (!eventLines.includes(`- 标题：${heading[1]}`)) errors.push(`${record.id}: body event title is not bound to its marker`);
       const priority = /^- 优先级：(high|medium|low)$/.exec(eventLines.find((line) => line.startsWith('- 优先级：')) ?? '')?.[1];
       if (!priority) errors.push(`${record.id}: missing or invalid priority`);
       const sectionContent = (heading) => {
@@ -354,6 +356,7 @@ export function validateEventDocument(markdown, options = {}) {
   const topicIndexStart = lines.findIndex((line) => line === '## 主题索引');
   const topicIndexEnd = lines.findIndex((line, index) => index > topicIndexStart && /^##\s+/.test(line));
   const topicIndexLines = lines.slice(topicIndexStart + 1, topicIndexEnd < 0 ? undefined : topicIndexEnd);
+  const topicReferenceCounts = new Map(records.map((record) => [eventAnchor(record.id), 0]));
   for (const line of topicIndexLines) {
     if (!line.startsWith('- [')) continue;
     const link = parseMarkdownLink(line);
@@ -364,8 +367,12 @@ export function validateEventDocument(markdown, options = {}) {
     const anchor = link.target.slice(1);
     if ((anchors.get(anchor) ?? []).length !== 1) errors.push(`topic index link ${anchor} does not target exactly one body anchor`);
     const record = recordsByAnchor.get(anchor);
-    if (record && link.label !== `${record.date}｜${record.bodyTitle}｜${escapeMarkdownText(record.organization)}`) errors.push(`${record.id}: body event title is not bound to its marker`);
+    if (record) {
+      topicReferenceCounts.set(anchor, topicReferenceCounts.get(anchor) + 1);
+      if (link.label !== `${record.date}｜${record.bodyTitle}｜${escapeMarkdownText(record.organization)}`) errors.push(`${record.id}: body event title is not bound to its marker`);
+    }
   }
+  for (const [anchor, count] of topicReferenceCounts) if (count !== 1) errors.push(`${anchor}: event anchor must be referenced exactly once in topic index`);
   const byOrganization = new Map();
   for (const record of records) byOrganization.set(record.organization, [...(byOrganization.get(record.organization) ?? []), record]);
   for (const [name, group] of byOrganization) {
