@@ -110,7 +110,7 @@ test('renders topic indexes, grouped records, and deterministic organization ord
 
   assert.match(markdown, /## 主题索引/);
   assert.match(markdown, /\[编码智能体\]\(#topic-coding-agent\)/);
-  assert.match(markdown, /<!-- event-record:[A-Za-z0-9_-]+ -->/);
+  assert.match(markdown, /<!-- event-record:\{"id":"a-medium","date":"2026-01-03","organization":"Alpha"\} -->/);
   assert.ok(markdown.indexOf('## Beta') < markdown.indexOf('## Alpha'));
   assert.ok(markdown.indexOf('## Alpha') < markdown.indexOf('## Zeta'));
   assert.ok(markdown.indexOf('### Codex workflow update') < markdown.indexOf('### Codex workflow update', markdown.indexOf('### Codex workflow update') + 1));
@@ -125,8 +125,7 @@ test('validates document markers, ordering, and rejects unmarked human event hea
   ], { ...coverage, verifiedAt: '2026-07-18' });
   assert.deepEqual(validateEventDocument(valid, coverage).errors, []);
 
-  const invalidPayload = Buffer.from(JSON.stringify({ id: 'newer', date: '2026-01-00', organization: 'OpenAI', title: 'Codex workflow update' }), 'utf8').toString('base64url');
-  const unordered = valid.replace(/<!-- event-record:[A-Za-z0-9_-]+ -->/, `<!-- event-record:${invalidPayload} -->`);
+  const unordered = valid.replace(/<!-- event-record:\{"id":"newer","date":"2026-01-02","organization":"OpenAI"\} -->/, '<!-- event-record:{"id":"newer","date":"2026-01-00","organization":"OpenAI"} -->');
   assert.match(validateEventDocument(unordered, coverage).errors.join('\n'), /invalid date/);
   assert.match(validateEventDocument(`${valid}\n### Human event\n`, coverage).errors.join('\n'), /unmarked event heading/);
 });
@@ -212,7 +211,7 @@ test('validates header metadata, topic links, unique anchors, and every event bl
     .replace(/#### 官方来源\n[^\n]+/, '#### 官方来源')
     .replace(/#### 技术剖析\n[^\n]+/, '#### 技术剖析');
   const errors = validateEventDocument(invalid, coverage).errors.join('\n');
-  assert.match(errors, /header record count does not match event markers/);
+  assert.match(errors, /header record count does not match event headings/);
   assert.match(errors, /duplicate anchor: event-openai-codex-workflow-2026/);
   assert.match(errors, /topic index link .* does not target exactly one body anchor/);
   assert.match(errors, /missing or empty 技术剖析 section/);
@@ -269,25 +268,37 @@ test('CLI process returns exit code 2 for invalid JSONL', async () => {
   }
 });
 
-test('encodes marker payloads so comment boundaries cannot terminate a marker', () => {
-  const organization = 'OpenAI --!> --> boundary';
+test('uses the fixed JSON marker contract and Unicode-escapes HTML comment boundaries', () => {
+  const organization = 'OpenAI --!> --> <script>&';
   const markdown = renderEventMarket([validRecord({ organization, mergeKey: 'boundary-marker' })], { ...coverage, verifiedAt: '2026-07-18' });
 
-  assert.match(markdown, /<!-- event-record:[A-Za-z0-9_-]+ -->/);
-  assert.ok(!markdown.includes(`event-record:${organization}`));
+  assert.match(markdown, /<!-- event-record:\{"id":"openai-codex-workflow-2026","date":"2026-01-01","organization":"OpenAI --!\\u003e --\\u003e \\u003cscript\\u003e\\u0026"\} -->/);
   assert.deepEqual(validateEventDocument(markdown, coverage).errors, []);
 });
 
 test('escapes standalone fence and block syntax in rendered Markdown fields', () => {
   const markdown = renderEventMarket([validRecord({
-    id: 'fenced-content', mergeKey: 'fenced-content', analysis: '~~~', workflowImpact: '---', limitations: '```', followUp: '> quoted block',
+    id: 'fenced-content', mergeKey: 'fenced-content', analysis: '   ~~~', workflowImpact: '   ---', limitations: '   ```', followUp: '   - list item',
   })], { ...coverage, verifiedAt: '2026-07-18' });
 
-  assert.match(markdown, /\n\\~~~\n/);
-  assert.match(markdown, /\n\\---\n/);
-  assert.ok(markdown.includes('\\`\\`\\`'));
-  assert.match(markdown, /\n&gt; quoted block\n/);
+  assert.match(markdown, /\n   \\~~~\n/);
+  assert.match(markdown, /\n   \\---\n/);
+  assert.ok(markdown.includes('   \\`\\`\\`'));
+  assert.match(markdown, /\n   \\- list item\n/);
   assert.deepEqual(validateEventDocument(markdown, coverage).errors, []);
+});
+
+test('rejects malformed, expanded, and mismatched event markers instead of skipping them', () => {
+  const valid = renderEventMarket([validRecord()], { ...coverage, verifiedAt: '2026-07-18' });
+  const malformed = valid.replace(/<!-- event-record:.+ -->/, '<!-- event-record:{"id":"openai-codex-workflow-2026" --!>');
+  const expanded = valid.replace(/<!-- event-record:.+ -->/, '<!-- event-record:{"id":"openai-codex-workflow-2026","date":"2026-01-01","organization":"OpenAI","title":"forbidden"} -->');
+  const changedTitle = valid.replace('### Codex workflow update', '### Tampered title');
+  const changedCount = valid.replace('> 收录数量：1', '> 收录数量：2');
+
+  assert.match(validateEventDocument(malformed, coverage).errors.join('\n'), /invalid event-record marker[\s\S]*event headings and valid marker records mismatch/);
+  assert.match(validateEventDocument(expanded, coverage).errors.join('\n'), /invalid event-record marker[\s\S]*valid marker records mismatch/);
+  assert.match(validateEventDocument(changedTitle, coverage).errors.join('\n'), /body event title is not bound to its marker/);
+  assert.match(validateEventDocument(changedCount, coverage).errors.join('\n'), /header record count does not match event headings/);
 });
 
 test('rejects input and output aliases by case, symlink, and hardlink identity', async () => {

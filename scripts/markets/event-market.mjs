@@ -32,15 +32,18 @@ function inCoverage(date, { start, end }) { return (!start || date >= start) && 
 function pushRequired(errors, label, record, fields) {
   for (const field of fields) if (!nonEmptyString(record[field])) errors.push(`${label}: ${field} is required`);
 }
+function markerPayload(record) {
+  return JSON.stringify({ id: record.id, date: record.date, organization: record.organization })
+    .replace(/[<>&]/g, (character) => ({ '<': '\\u003c', '>': '\\u003e', '&': '\\u0026' })[character]);
+}
 function recordMarker(record) {
-  const payload = Buffer.from(JSON.stringify({ id: record.id, date: record.date, organization: record.organization, title: record.title }), 'utf8').toString('base64url');
-  return `<!-- event-record:${payload} -->`;
+  return `<!-- event-record:${markerPayload(record)} -->`;
 }
 function eventAnchor(id) { return `event-${id}`; }
 function escapeHtml(value) { return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function escapeMarkdownText(value) {
   const escaped = escapeHtml(value).replace(/([\\`*_{}\[\]()#+.!|])/g, '\\$1');
-  return /^(?:~{3,}|-{3,}|`{3,})/.test(escaped) ? `\\${escaped}` : escaped;
+  return escaped.replace(/^([ ]{0,3})(?=(?:~{3,}|-{3,}|`{3,}|[-+*]\s|\d+[.)]\s|>\s?|#{1,6}(?:\s|$)))/, '$1\\');
 }
 function error(message) { const result = new Error(message); result.exitCode = 2; return result; }
 
@@ -49,9 +52,10 @@ function topicIndexLabel(record) {
 }
 
 function parseMarkerPayload(payload) {
-  const json = Buffer.from(payload, 'base64url').toString('utf8');
-  if (Buffer.from(json, 'utf8').toString('base64url') !== payload) throw error('invalid event-record marker encoding');
-  return JSON.parse(json);
+  const record = JSON.parse(payload);
+  if (!isObject(record) || Object.keys(record).length !== 3 || !['id', 'date', 'organization'].every((field) => Object.hasOwn(record, field))) throw error('invalid event-record marker contract');
+  if (markerPayload(record) !== payload) throw error('invalid event-record marker encoding');
+  return record;
 }
 
 function findUnescaped(value, character, start = 0) {
@@ -253,6 +257,8 @@ export function validateEventDocument(markdown, options = {}) {
   const records = [];
   const ids = new Set();
   const organizationOrder = [];
+  const eventHeadings = [];
+  const markerLines = [];
   const anchors = new Map();
   let organization = null;
   for (let index = 0; index < lines.length; index += 1) {
@@ -282,27 +288,36 @@ export function validateEventDocument(markdown, options = {}) {
       organizationOrder.push(organization);
     }
     if (/^###\s+/.test(lines[index])) {
+      eventHeadings.push({ line: index + 1, title: lines[index].replace(/^###\s+/, '') });
       let markerIndex = index + 1;
       while (markerIndex < lines.length && !lines[markerIndex].trim()) markerIndex += 1;
       if (!lines[markerIndex]?.startsWith('<!-- event-record:')) errors.push(`line ${index + 1}: unmarked event heading`);
     }
-    const marker = /^<!-- event-record:([A-Za-z0-9_-]+) -->$/.exec(lines[index]);
-    if (!marker) continue;
+    if (!lines[index].startsWith('<!-- event-record:')) continue;
+    markerLines.push(index + 1);
+    const marker = /^<!-- event-record:(.+) -->$/.exec(lines[index]);
+    if (!marker) {
+      errors.push(`line ${index + 1}: invalid event-record marker`);
+      continue;
+    }
     try {
       const record = parseMarkerPayload(marker[1]);
       const label = record.id || `line ${index + 1}`;
       if (!isStableSlug(record.id)) errors.push(`${label}: marker id must be a stable lowercase slug`);
       if (!nonEmptyString(record.organization) || hasControlCharacters(record.organization)) errors.push(`${label}: marker organization is unsafe`);
-      if (!nonEmptyString(record.title) || hasControlCharacters(record.title)) errors.push(`${label}: marker title is unsafe`);
-      if (!isStableSlug(record.id) || !nonEmptyString(record.organization) || !nonEmptyString(record.title) || !checkDate(errors, label, record.date, options)) {
+      const heading = /^###\s+(.+)$/.exec(lines[index - 1] ?? '');
+      if (!heading) errors.push(`${label}: marker must immediately follow an event heading`);
+      if (!isStableSlug(record.id) || !nonEmptyString(record.organization) || !heading || !checkDate(errors, label, record.date, options)) {
         continue;
       }
       if (ids.has(record.id)) errors.push(`${record.id}: duplicate event-record marker`);
       ids.add(record.id);
       if (organization !== escapeMarkdownText(record.organization)) errors.push(`${record.id}: marker organization does not match its section`);
       if ((anchors.get(eventAnchor(record.id)) ?? []).length !== 1) errors.push(`${record.id}: event anchor must exist exactly once`);
+      if (lines[index - 2] !== `<a id="${eventAnchor(record.id)}"></a>`) errors.push(`${record.id}: event anchor must immediately precede its heading`);
       const nextHeading = lines.findIndex((line, lineIndex) => lineIndex > index && /^#{2,3}\s+/.test(line));
       const eventLines = lines.slice(index + 1, nextHeading < 0 ? undefined : nextHeading);
+      if (!eventLines.includes(`- 日期：${record.date}`)) errors.push(`${record.id}: body date does not match marker`);
       const priority = /^- 优先级：(high|medium|low)$/.exec(eventLines.find((line) => line.startsWith('- 优先级：')) ?? '')?.[1];
       if (!priority) errors.push(`${record.id}: missing or invalid priority`);
       const sectionContent = (heading) => {
@@ -322,13 +337,15 @@ export function validateEventDocument(markdown, options = {}) {
         const sourceLink = parseMarkdownLink(source);
         if (!sourceLink || !validOfficialUrl(sourceLink.target)) errors.push(`${record.id}: invalid official source`);
       }
-      records.push({ ...record, sectionOrganization: organization, priority, line: index + 1 });
+      records.push({ ...record, bodyTitle: heading[1], sectionOrganization: organization, priority, line: index + 1 });
     } catch {
       errors.push(`line ${index + 1}: invalid event-record marker`);
     }
   }
   if (!records.length) errors.push('document contains no event-record markers');
-  if (countHeader && Number(countHeader[1]) !== records.length) errors.push('header record count does not match event markers');
+  if (eventHeadings.length !== markerLines.length) errors.push('event headings and marker lines mismatch');
+  if (eventHeadings.length !== records.length) errors.push('event headings and valid marker records mismatch');
+  if (countHeader && Number(countHeader[1]) !== eventHeadings.length) errors.push('header record count does not match event headings');
   const recordsByAnchor = new Map(records.map((record) => [eventAnchor(record.id), record]));
   for (const topic of TOPICS) {
     if ((anchors.get(`topic-${topic}`) ?? []).length !== 1) errors.push(`missing or duplicate topic anchor: ${topic}`);
@@ -347,7 +364,7 @@ export function validateEventDocument(markdown, options = {}) {
     const anchor = link.target.slice(1);
     if ((anchors.get(anchor) ?? []).length !== 1) errors.push(`topic index link ${anchor} does not target exactly one body anchor`);
     const record = recordsByAnchor.get(anchor);
-    if (record && link.label !== topicIndexLabel(record)) errors.push(`${record.id}: topic index entry must include date, title, organization, and anchor`);
+    if (record && link.label !== `${record.date}｜${record.bodyTitle}｜${escapeMarkdownText(record.organization)}`) errors.push(`${record.id}: body event title is not bound to its marker`);
   }
   const byOrganization = new Map();
   for (const record of records) byOrganization.set(record.organization, [...(byOrganization.get(record.organization) ?? []), record]);
