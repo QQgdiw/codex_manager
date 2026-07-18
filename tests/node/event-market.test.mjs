@@ -90,6 +90,18 @@ test('requires valid keep fields, enumerations, and official HTTPS sources', () 
   assert.match(result.errors.join('\n'), /future: keep records must have occurred: true/);
 });
 
+test('allows official source verification after coverage while rejecting invalid calendar dates', () => {
+  const afterCoverage = validateCurationRecords([
+    validRecord({ officialSources: [{ ...validRecord().officialSources[0], verifiedAt: '2026-07-19' }] }),
+  ], coverage);
+  assert.deepEqual(afterCoverage.errors, []);
+
+  const invalidCalendarDate = validateCurationRecords([
+    validRecord({ officialSources: [{ ...validRecord().officialSources[0], verifiedAt: '2026-02-30' }] }),
+  ], coverage);
+  assert.match(invalidCalendarDate.errors.join('\n'), /officialSources\[0\]: invalid verifiedAt/);
+});
+
 test('allows lightweight exclusions only when they explain the decision', () => {
   const result = validateCurationRecords([
     { id: 'excluded', date: '2026-01-02', organization: 'OpenAI', decision: 'exclude', decisionReason: 'Superseded by a larger release.' },
@@ -377,6 +389,28 @@ test('validates header metadata, topic links, unique anchors, and every event bl
   assert.match(errors, /topic index link .* does not target exactly one body anchor/);
   assert.match(errors, /missing or empty 技术剖析 section/);
   assert.match(errors, /missing official source/);
+});
+
+test('requires unique ordered event metadata, content sections, and structured official sources', () => {
+  const valid = renderEventMarket([validRecord()], { ...coverage, verifiedAt: '2026-07-18' });
+
+  const missingPartners = valid.replace('- 协作方：无\n', '');
+  assert.match(validateEventDocument(missingPartners, coverage).errors.join('\n'), /must contain exactly one 协作方 metadata line/);
+
+  const wrongMetadataOrder = valid.replace('- 优先级：high\n- 主题：编码智能体', '- 主题：编码智能体\n- 优先级：high');
+  assert.match(validateEventDocument(wrongMetadataOrder, coverage).errors.join('\n'), /event metadata lines are not in the required order/);
+
+  const thirdPartyType = valid.replace('（official-announcement，复核：2026-07-18）', '（third-party-blog，复核：2026-07-18）');
+  assert.match(validateEventDocument(thirdPartyType, coverage).errors.join('\n'), /invalid official source type: third-party-blog/);
+
+  const invalidSourceDate = valid.replace('（official-announcement，复核：2026-07-18）', '（official-announcement，复核：2099-99-99）');
+  assert.match(validateEventDocument(invalidSourceDate, coverage).errors.join('\n'), /invalid official source verifiedAt: 2099-99-99/);
+
+  const duplicateFacts = valid.replace('#### 技术剖析', '#### 客观事实\n- Duplicate fact.\n\n#### 技术剖析');
+  assert.match(validateEventDocument(duplicateFacts, coverage).errors.join('\n'), /must contain exactly one 客观事实 section/);
+
+  const unstructuredSourceText = valid.replace('#### 官方来源\n', '#### 官方来源\nUnstructured source text\n');
+  assert.match(validateEventDocument(unstructuredSourceText, coverage).errors.join('\n'), /official source section contains unstructured content/);
 });
 
 test('rejects actual unordered event blocks', () => {

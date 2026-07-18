@@ -129,7 +129,7 @@ function checkText(errors, label, field, value) {
 
 function checkDate(errors, label, value, options, field = 'date') {
   if (!validDate(value)) { errors.push(`${label}: invalid ${field}`); return false; }
-  if ((field === 'date' || field === 'verifiedAt') && !inCoverage(value, options)) errors.push(`${label}: ${field} outside coverage`);
+  if (field === 'date' && !inCoverage(value, options)) errors.push(`${label}: ${field} outside coverage`);
   return true;
 }
 
@@ -372,32 +372,68 @@ export function validateEventDocument(markdown, options = {}) {
       if (organization !== escapeMarkdownText(record.organization)) errors.push(`${record.id}: marker organization does not match its organization block`);
       if ((anchors.get(eventAnchor(record.id)) ?? []).length !== 1) errors.push(`${record.id}: event anchor must exist exactly once`);
       if (lines[index - 2] !== `<a id="${eventAnchor(record.id)}"></a>`) errors.push(`${record.id}: event anchor must immediately precede its heading`);
-      const nextHeading = lines.findIndex((line, lineIndex) => lineIndex > index && /^#{2,3}\s+/.test(line));
-      const eventLines = lines.slice(index + 1, nextHeading < 0 ? undefined : nextHeading);
-      if (!eventLines.includes(`- 日期：${record.date}`)) errors.push(`${record.id}: body date does not match marker`);
-      if (!eventLines.includes(`- 标题：${heading[1]}`)) errors.push(`${record.id}: body event title is not bound to its marker`);
-      const priority = /^- 优先级：(high|medium|low)$/.exec(eventLines.find((line) => line.startsWith('- 优先级：')) ?? '')?.[1];
-      if (!priority) errors.push(`${record.id}: missing or invalid priority`);
-      const bodyTopicLines = eventLines.filter((line) => line.startsWith('- 主题：'));
-      let bodyTopicDisplay = null;
-      if (bodyTopicLines.length !== 1) errors.push(`${record.id}: body must contain exactly one topic field`);
-      else bodyTopicDisplay = bodyTopicLines[0].slice('- 主题：'.length);
-      const sectionContent = (heading) => {
-        const headingIndex = eventLines.indexOf(heading);
-        if (headingIndex < 0) return [];
-        const nextIndex = eventLines.findIndex((line, lineIndex) => lineIndex > headingIndex && /^####\s+/.test(line));
-        return eventLines.slice(headingIndex + 1, nextIndex < 0 ? undefined : nextIndex).filter((line) => line.trim());
-      };
-      for (const heading of ['客观事实', '技术剖析', '工作流影响', '局限与风险', '后续关注']) {
-        const content = sectionContent(`#### ${heading}`);
-        if (!content.length || (heading === '客观事实' && !content.some((line) => /^-\s+/.test(line)))) errors.push(`${record.id}: missing or empty ${heading} section`);
+      const nextBoundary = lines.findIndex((line, lineIndex) => lineIndex > index && (/^#{2,3}\s+/.test(line) || /^<a id="(?:event-|organization-)/.test(line)));
+      const eventLines = lines.slice(index + 1, nextBoundary < 0 ? undefined : nextBoundary);
+      const metadataDefinitions = [
+        ['日期', '- 日期：'],
+        ['标题', '- 标题：'],
+        ['优先级', '- 优先级：'],
+        ['主题', '- 主题：'],
+        ['协作方', '- 协作方：'],
+      ];
+      const metadataLines = new Map();
+      for (const [name, prefix] of metadataDefinitions) {
+        const matches = eventLines.filter((line) => line.startsWith(prefix));
+        if (matches.length !== 1) errors.push(`${record.id}: must contain exactly one ${name} metadata line`);
+        metadataLines.set(name, matches.length === 1 ? matches[0] : null);
       }
-      const sources = sectionContent('#### 官方来源');
-      const sourceEntries = sources.filter((line) => line.startsWith('- '));
-      if (!sourceEntries.length) errors.push(`${record.id}: missing official source`);
-      for (const source of sourceEntries) {
+      const nonEmptyEventLines = eventLines.filter((line) => line.trim());
+      if (metadataDefinitions.some(([, prefix], metadataIndex) => !nonEmptyEventLines[metadataIndex]?.startsWith(prefix))) errors.push(`${record.id}: event metadata lines are not in the required order`);
+      if (metadataLines.get('日期') !== `- 日期：${record.date}`) errors.push(`${record.id}: body date does not match marker`);
+      if (metadataLines.get('标题') !== `- 标题：${heading[1]}`) errors.push(`${record.id}: body event title is not bound to its marker`);
+      const priority = /^- 优先级：(high|medium|low)$/.exec(metadataLines.get('优先级') ?? '')?.[1];
+      if (!priority) errors.push(`${record.id}: missing or invalid priority`);
+      const bodyTopicDisplay = metadataLines.get('主题')?.slice('- 主题：'.length) ?? null;
+      const partnersDisplay = metadataLines.get('协作方')?.slice('- 协作方：'.length) ?? null;
+      if (!nonEmptyString(partnersDisplay) || hasControlCharacters(partnersDisplay) || hasUnpairedSurrogate(partnersDisplay) || /[<>]/.test(partnersDisplay)) errors.push(`${record.id}: collaboration metadata is empty or unsafe`);
+
+      const sectionNames = ['客观事实', '技术剖析', '工作流影响', '局限与风险', '后续关注', '官方来源'];
+      const sectionHeadings = eventLines
+        .map((line, lineIndex) => ({ match: /^####\s+(.+?)\s*$/.exec(line), lineIndex }))
+        .filter(({ match }) => match)
+        .map(({ match, lineIndex }) => ({ name: match[1], lineIndex }));
+      for (const sectionName of sectionNames) {
+        if (sectionHeadings.filter(({ name }) => name === sectionName).length !== 1) errors.push(`${record.id}: must contain exactly one ${sectionName} section`);
+      }
+      if (sectionHeadings.length !== sectionNames.length || sectionHeadings.some(({ name }, sectionIndex) => name !== sectionNames[sectionIndex])) errors.push(`${record.id}: event sections are not in the required order`);
+      if (nonEmptyEventLines[metadataDefinitions.length] !== '#### 客观事实') errors.push(`${record.id}: event sections must follow metadata`);
+      const sectionContent = (sectionName) => {
+        const headingEntry = sectionHeadings.find(({ name }) => name === sectionName);
+        if (!headingEntry) return [];
+        const nextEntry = sectionHeadings.find(({ lineIndex }) => lineIndex > headingEntry.lineIndex);
+        return eventLines.slice(headingEntry.lineIndex + 1, nextEntry?.lineIndex).filter((line) => line.trim());
+      };
+      for (const sectionName of sectionNames.slice(0, -1)) {
+        const content = sectionContent(sectionName);
+        if (!content.length || (sectionName === '客观事实' && !content.some((line) => /^-\s+/.test(line)))) errors.push(`${record.id}: missing or empty ${sectionName} section`);
+      }
+      const sources = sectionContent('官方来源');
+      if (!sources.length) errors.push(`${record.id}: missing official source`);
+      for (const source of sources) {
         const sourceLink = parseMarkdownLink(source);
-        if (!sourceLink || !validOfficialUrl(sourceLink.target)) errors.push(`${record.id}: invalid official source`);
+        if (!sourceLink || !nonEmptyString(sourceLink.label)) {
+          errors.push(`${record.id}: official source section contains unstructured content`);
+          continue;
+        }
+        if (!validOfficialUrl(sourceLink.target)) errors.push(`${record.id}: invalid official source`);
+        const sourceMetadata = /^（([^，]+)，复核：([^）]+)）$/.exec(source.slice(sourceLink.end));
+        if (!sourceMetadata) {
+          errors.push(`${record.id}: official source section contains unstructured content`);
+          continue;
+        }
+        const [, sourceType, sourceVerifiedAt] = sourceMetadata;
+        if (!SOURCE_TYPES.includes(sourceType)) errors.push(`${record.id}: invalid official source type: ${sourceType}`);
+        if (!validDate(sourceVerifiedAt)) errors.push(`${record.id}: invalid official source verifiedAt: ${sourceVerifiedAt}`);
       }
       records.push({ ...record, bodyTitle: heading[1], bodyTopicDisplay, sectionOrganization: organization, priority, line: index + 1 });
     } catch {
