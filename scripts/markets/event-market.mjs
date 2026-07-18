@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const TOPICS = ['coding-agent', 'extension-security', 'robotics-ros', 'embedded-edge', 'eda-fpga-chip', 'engineering-docs'];
@@ -33,14 +33,51 @@ function pushRequired(errors, label, record, fields) {
   for (const field of fields) if (!nonEmptyString(record[field])) errors.push(`${label}: ${field} is required`);
 }
 function recordMarker(record) {
-  return `<!-- event-record:${JSON.stringify({ id: record.id, date: record.date, organization: record.organization })} -->`;
+  const payload = Buffer.from(JSON.stringify({ id: record.id, date: record.date, organization: record.organization, title: record.title }), 'utf8').toString('base64url');
+  return `<!-- event-record:${payload} -->`;
 }
 function eventAnchor(id) { return `event-${id}`; }
 function escapeHtml(value) { return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function escapeMarkdownText(value) {
-  return escapeHtml(value).replace(/([\\`*_{}\[\]()#+.!|])/g, '\\$1');
+  const escaped = escapeHtml(value).replace(/([\\`*_{}\[\]()#+.!|])/g, '\\$1');
+  return /^(?:~{3,}|-{3,}|`{3,})/.test(escaped) ? `\\${escaped}` : escaped;
 }
 function error(message) { const result = new Error(message); result.exitCode = 2; return result; }
+
+function topicIndexLabel(record) {
+  return `${record.date}｜${escapeMarkdownText(record.title)}｜${escapeMarkdownText(record.organization)}`;
+}
+
+function parseMarkerPayload(payload) {
+  const json = Buffer.from(payload, 'base64url').toString('utf8');
+  if (Buffer.from(json, 'utf8').toString('base64url') !== payload) throw error('invalid event-record marker encoding');
+  return JSON.parse(json);
+}
+
+function findUnescaped(value, character, start = 0) {
+  for (let index = start; index < value.length; index += 1) {
+    if (value[index] !== character) continue;
+    let backslashes = 0;
+    for (let previous = index - 1; previous >= 0 && value[previous] === '\\'; previous -= 1) backslashes += 1;
+    if (backslashes % 2 === 0) return index;
+  }
+  return -1;
+}
+
+function parseMarkdownLink(line) {
+  if (!line.startsWith('- [')) return null;
+  const labelEnd = findUnescaped(line, ']', 3);
+  if (labelEnd < 0 || line[labelEnd + 1] !== '(') return null;
+  const targetStart = labelEnd + 2;
+  if (line[targetStart] === '<') {
+    const targetEnd = line.indexOf('>', targetStart + 1);
+    if (targetEnd < 0 || line[targetEnd + 1] !== ')') return null;
+    return { label: line.slice(3, labelEnd), target: line.slice(targetStart + 1, targetEnd), end: targetEnd + 2 };
+  }
+  const targetEnd = findUnescaped(line, ')', targetStart);
+  if (targetEnd < 0) return null;
+  return { label: line.slice(3, labelEnd), target: line.slice(targetStart, targetEnd), end: targetEnd + 1 };
+}
 
 function validOfficialUrl(value) {
   if (!nonEmptyString(value) || hasControlCharacters(value) || !/^https:\/\//i.test(value)) return null;
@@ -52,10 +89,9 @@ function validOfficialUrl(value) {
   }
 }
 
-function checkText(errors, label, field, value, { marker = false } = {}) {
+function checkText(errors, label, field, value) {
   if (typeof value !== 'string') return;
   if (hasControlCharacters(value)) errors.push(`${label}: ${field} contains control characters`);
-  if (marker && value.includes('-->')) errors.push(`${label}: ${field} contains unsafe marker text`);
 }
 
 function checkDate(errors, label, value, options, field = 'date') {
@@ -97,7 +133,7 @@ export function validateCurationRecords(records, options = {}) {
     else ids.add(record.id);
     const dateValid = checkDate(localErrors, label, record.date, options);
     if (!nonEmptyString(record.organization)) localErrors.push(`${label}: organization is required`);
-    else checkText(localErrors, label, 'organization', record.organization, { marker: true });
+    else checkText(localErrors, label, 'organization', record.organization);
     if (record.decision === 'exclude') {
       if (!nonEmptyString(record.decisionReason)) localErrors.push(`${label}: decisionReason is required`);
       errors.push(...localErrors);
@@ -157,8 +193,8 @@ export function renderEventMarket(records, metadata = {}) {
     '# 工程工作流事件市场',
     '',
     `> 覆盖时间：${metadata.start} 至 ${metadata.end}`,
-    `> 复核日期：${metadata.verifiedAt ?? metadata.end ?? ''}`,
-    '> 更新方式：由受控 JSONL 记录经校验后自动生成。',
+    `> 最后核验日期：${metadata.verifiedAt ?? metadata.end ?? ''}`,
+    '> 更新方式：按需手动触发，由受控 JSONL 记录经校验后生成。',
     `> 收录数量：${checked.kept.length}`,
     '> 官方来源规则：每项必须提供经复核的 HTTPS 官方来源。',
     '> 事实与分析：客观事实仅陈述来源支持的信息，技术剖析明确标注分析判断。',
@@ -171,7 +207,7 @@ export function renderEventMarket(records, metadata = {}) {
     const topicRecords = sortRecords(checked.kept.filter((record) => record.topics.includes(topic)));
     lines.push('', `<a id="topic-${topic}"></a>`, `**${escapeMarkdownText(TOPIC_LABELS[topic])}**`);
     if (!topicRecords.length) lines.push('- 暂无通过复核的事件。');
-    for (const record of topicRecords) lines.push(`- [${record.date} ${escapeMarkdownText(record.title)}](#${eventAnchor(record.id)})`);
+    for (const record of topicRecords) lines.push(`- [${topicIndexLabel(record)}](#${eventAnchor(record.id)})`);
   }
   for (const [organization, group] of sortOrganizations(checked.kept)) {
     lines.push('', `## ${escapeMarkdownText(organization)}`);
@@ -227,13 +263,16 @@ export function validateEventDocument(markdown, options = {}) {
   for (const [anchor, positions] of anchors) if (positions.length > 1) errors.push(`duplicate anchor: ${anchor}`);
   const requiredHeaders = [
     ['覆盖时间', /^> 覆盖时间：\d{4}-\d{2}-\d{2} 至 \d{4}-\d{2}-\d{2}$/],
-    ['更新方式', /^> 更新方式：.+$/],
     ['官方来源规则', /^> 官方来源规则：.+$/],
     ['事实与分析', /^> 事实与分析：.+$/],
   ];
   for (const [name, pattern] of requiredHeaders) if (!lines.some((line) => pattern.test(line))) errors.push(`missing document header: ${name}`);
+  if (!lines.includes('> 更新方式：按需手动触发，由受控 JSONL 记录经校验后生成。')) errors.push('invalid update method header');
   const coverageHeader = lines.find((line) => /^> 覆盖时间：/.test(line));
   if (coverageHeader && options.start && options.end && coverageHeader !== `> 覆盖时间：${options.start} 至 ${options.end}`) errors.push('coverage header does not match requested range');
+  const verificationHeader = /^> 最后核验日期：(\d{4}-\d{2}-\d{2})$/.exec(lines.find((line) => /^> 最后核验日期：/.test(line)) ?? '');
+  if (!verificationHeader || !validDate(verificationHeader[1])) errors.push('missing or invalid verification-date header');
+  else if (options.verifiedAt && verificationHeader[1] !== options.verifiedAt) errors.push('verification-date header does not match requested date');
   const countHeader = /^> 收录数量：(\d+)$/.exec(lines.find((line) => /^> 收录数量：/.test(line)) ?? '');
   if (!countHeader) errors.push('missing document header: 收录数量');
   for (let index = 0; index < lines.length; index += 1) {
@@ -247,14 +286,15 @@ export function validateEventDocument(markdown, options = {}) {
       while (markerIndex < lines.length && !lines[markerIndex].trim()) markerIndex += 1;
       if (!lines[markerIndex]?.startsWith('<!-- event-record:')) errors.push(`line ${index + 1}: unmarked event heading`);
     }
-    const marker = /^<!-- event-record:(.+) -->$/.exec(lines[index]);
+    const marker = /^<!-- event-record:([A-Za-z0-9_-]+) -->$/.exec(lines[index]);
     if (!marker) continue;
     try {
-      const record = JSON.parse(marker[1]);
+      const record = parseMarkerPayload(marker[1]);
       const label = record.id || `line ${index + 1}`;
       if (!isStableSlug(record.id)) errors.push(`${label}: marker id must be a stable lowercase slug`);
-      if (!nonEmptyString(record.organization) || hasControlCharacters(record.organization) || record.organization.includes('-->')) errors.push(`${label}: marker organization is unsafe`);
-      if (!isStableSlug(record.id) || !nonEmptyString(record.organization) || !checkDate(errors, label, record.date, options)) {
+      if (!nonEmptyString(record.organization) || hasControlCharacters(record.organization)) errors.push(`${label}: marker organization is unsafe`);
+      if (!nonEmptyString(record.title) || hasControlCharacters(record.title)) errors.push(`${label}: marker title is unsafe`);
+      if (!isStableSlug(record.id) || !nonEmptyString(record.organization) || !nonEmptyString(record.title) || !checkDate(errors, label, record.date, options)) {
         continue;
       }
       if (ids.has(record.id)) errors.push(`${record.id}: duplicate event-record marker`);
@@ -279,8 +319,8 @@ export function validateEventDocument(markdown, options = {}) {
       const sourceEntries = sources.filter((line) => line.startsWith('- '));
       if (!sourceEntries.length) errors.push(`${record.id}: missing official source`);
       for (const source of sourceEntries) {
-        const sourceLink = /^- \[[^\]]+\]\(<([^>]+)>\)/.exec(source);
-        if (!sourceLink || !validOfficialUrl(sourceLink?.[1])) errors.push(`${record.id}: invalid official source`);
+        const sourceLink = parseMarkdownLink(source);
+        if (!sourceLink || !validOfficialUrl(sourceLink.target)) errors.push(`${record.id}: invalid official source`);
       }
       records.push({ ...record, sectionOrganization: organization, priority, line: index + 1 });
     } catch {
@@ -289,6 +329,7 @@ export function validateEventDocument(markdown, options = {}) {
   }
   if (!records.length) errors.push('document contains no event-record markers');
   if (countHeader && Number(countHeader[1]) !== records.length) errors.push('header record count does not match event markers');
+  const recordsByAnchor = new Map(records.map((record) => [eventAnchor(record.id), record]));
   for (const topic of TOPICS) {
     if ((anchors.get(`topic-${topic}`) ?? []).length !== 1) errors.push(`missing or duplicate topic anchor: ${topic}`);
     if (!markdown.includes(`[${escapeMarkdownText(TOPIC_LABELS[topic])}](#topic-${topic})`)) errors.push(`missing topic index entry: ${topic}`);
@@ -297,8 +338,16 @@ export function validateEventDocument(markdown, options = {}) {
   const topicIndexEnd = lines.findIndex((line, index) => index > topicIndexStart && /^##\s+/.test(line));
   const topicIndexLines = lines.slice(topicIndexStart + 1, topicIndexEnd < 0 ? undefined : topicIndexEnd);
   for (const line of topicIndexLines) {
-    const link = /\]\(#(event-[a-z0-9]+(?:-[a-z0-9]+)*)\)$/.exec(line);
-    if (link && (anchors.get(link[1]) ?? []).length !== 1) errors.push(`topic index link ${link[1]} does not target exactly one event anchor`);
+    if (!line.startsWith('- [')) continue;
+    const link = parseMarkdownLink(line);
+    if (!link || !link.target.startsWith('#')) {
+      errors.push('invalid topic index link');
+      continue;
+    }
+    const anchor = link.target.slice(1);
+    if ((anchors.get(anchor) ?? []).length !== 1) errors.push(`topic index link ${anchor} does not target exactly one body anchor`);
+    const record = recordsByAnchor.get(anchor);
+    if (record && link.label !== topicIndexLabel(record)) errors.push(`${record.id}: topic index entry must include date, title, organization, and anchor`);
   }
   const byOrganization = new Map();
   for (const record of records) byOrganization.set(record.organization, [...(byOrganization.get(record.organization) ?? []), record]);
@@ -320,9 +369,45 @@ export async function atomicWrite(output, text, { writeFileImpl = writeFile, ren
     await writeFileImpl(temporary, text, 'utf8');
     await renameImpl(temporary, target);
   } catch (cause) {
-    await rmImpl(temporary, { force: true }).catch(() => {});
+    try {
+      await rmImpl(temporary, { force: true });
+    } catch (cleanupCause) {
+      if (cause && typeof cause === 'object') {
+        cause.cleanupError = cleanupCause;
+        cause.message = `${cause.message}\nTemporary file cleanup failed: ${cleanupCause?.message ?? String(cleanupCause)}`;
+      } else {
+        throw new AggregateError([cause, cleanupCause], 'Temporary file cleanup failed after atomic write failure');
+      }
+    }
     throw cause;
   }
+}
+
+function isMissingPathError(cause) {
+  return cause?.code === 'ENOENT' || cause?.code === 'ENOTDIR';
+}
+
+function comparisonPath(path, platform) {
+  return platform === 'win32' ? path.toLowerCase() : path;
+}
+
+async function fileIdentity(path, { realpathImpl = realpath, statImpl = stat, platform = process.platform } = {}) {
+  const absolute = resolve(path);
+  try {
+    const physical = await realpathImpl(absolute);
+    const details = await statImpl(physical);
+    return { exists: true, path: comparisonPath(physical, platform), device: details.dev, inode: details.ino };
+  } catch (cause) {
+    if (!isMissingPathError(cause)) throw cause;
+    const physicalParent = await realpathImpl(dirname(absolute));
+    return { exists: false, path: comparisonPath(join(physicalParent, basename(absolute)), platform) };
+  }
+}
+
+async function sameFile(input, output, dependencies) {
+  const [source, target] = await Promise.all([fileIdentity(input, dependencies), fileIdentity(output, dependencies)]);
+  if (source.path === target.path) return true;
+  return source.exists && target.exists && source.device === target.device && source.inode === target.inode;
 }
 
 function parseArguments(argv) {
@@ -352,7 +437,7 @@ function parseJsonl(content) {
 
 export async function runCli(argv = process.argv.slice(2), dependencies = {}) {
   const options = parseArguments(argv);
-  if (options.command === 'render' && resolve(options.input) === resolve(options.output)) throw error('input and output must resolve to different paths');
+  if (options.command === 'render' && await sameFile(options.input, options.output, dependencies)) throw error('input and output must resolve to different files');
   const content = await (dependencies.readFileImpl ?? readFile)(options.input, 'utf8');
   if (options.command === 'validate-doc') {
     const result = validateEventDocument(content, options);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -110,7 +110,7 @@ test('renders topic indexes, grouped records, and deterministic organization ord
 
   assert.match(markdown, /## 主题索引/);
   assert.match(markdown, /\[编码智能体\]\(#topic-coding-agent\)/);
-  assert.match(markdown, /<!-- event-record:{"id":"a-medium","date":"2026-01-03","organization":"Alpha"} -->/);
+  assert.match(markdown, /<!-- event-record:[A-Za-z0-9_-]+ -->/);
   assert.ok(markdown.indexOf('## Beta') < markdown.indexOf('## Alpha'));
   assert.ok(markdown.indexOf('## Alpha') < markdown.indexOf('## Zeta'));
   assert.ok(markdown.indexOf('### Codex workflow update') < markdown.indexOf('### Codex workflow update', markdown.indexOf('### Codex workflow update') + 1));
@@ -125,7 +125,8 @@ test('validates document markers, ordering, and rejects unmarked human event hea
   ], { ...coverage, verifiedAt: '2026-07-18' });
   assert.deepEqual(validateEventDocument(valid, coverage).errors, []);
 
-  const unordered = valid.replace('"date":"2026-01-02"', '"date":"2026-01-00"');
+  const invalidPayload = Buffer.from(JSON.stringify({ id: 'newer', date: '2026-01-00', organization: 'OpenAI', title: 'Codex workflow update' }), 'utf8').toString('base64url');
+  const unordered = valid.replace(/<!-- event-record:[A-Za-z0-9_-]+ -->/, `<!-- event-record:${invalidPayload} -->`);
   assert.match(validateEventDocument(unordered, coverage).errors.join('\n'), /invalid date/);
   assert.match(validateEventDocument(`${valid}\n### Human event\n`, coverage).errors.join('\n'), /unmarked event heading/);
 });
@@ -155,7 +156,7 @@ test('rejects unsafe JSONL fields and malformed official URLs before rendering',
 
   const errors = result.errors.join('\n');
   assert.match(errors, /Not-A-Slug: id must be a stable lowercase slug/);
-  assert.match(errors, /marker-injection: organization contains unsafe marker text/);
+  assert.doesNotMatch(errors, /marker-injection: organization contains unsafe marker text/);
   assert.match(errors, /control-injection: title contains control characters/);
   assert.match(errors, /url-no-host: officialSources\[0\]\.url must be a valid HTTPS URL/);
   assert.match(errors, /url-control: officialSources\[0\]\.url must be a valid HTTPS URL/);
@@ -185,7 +186,7 @@ test('keeps physical JSONL line numbers and rejects resolved identical paths', a
     );
     await assert.rejects(
       () => runCli(['render', '--input', input, '--output', resolve(input), '--start', coverage.start, '--end', coverage.end, '--verified-at', '2026-07-18']),
-      /input and output must resolve to different paths/,
+      /input and output must resolve to different files/,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -213,7 +214,7 @@ test('validates header metadata, topic links, unique anchors, and every event bl
   const errors = validateEventDocument(invalid, coverage).errors.join('\n');
   assert.match(errors, /header record count does not match event markers/);
   assert.match(errors, /duplicate anchor: event-openai-codex-workflow-2026/);
-  assert.match(errors, /topic index link .* does not target exactly one event anchor/);
+  assert.match(errors, /topic index link .* does not target exactly one body anchor/);
   assert.match(errors, /missing or empty 技术剖析 section/);
   assert.match(errors, /missing official source/);
 });
@@ -263,6 +264,89 @@ test('CLI process returns exit code 2 for invalid JSONL', async () => {
       resolve('scripts/markets/event-market.mjs'), 'validate-curation', '--input', input, '--start', coverage.start, '--end', coverage.end,
     ]);
     assert.equal(code, 2);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('encodes marker payloads so comment boundaries cannot terminate a marker', () => {
+  const organization = 'OpenAI --!> --> boundary';
+  const markdown = renderEventMarket([validRecord({ organization, mergeKey: 'boundary-marker' })], { ...coverage, verifiedAt: '2026-07-18' });
+
+  assert.match(markdown, /<!-- event-record:[A-Za-z0-9_-]+ -->/);
+  assert.ok(!markdown.includes(`event-record:${organization}`));
+  assert.deepEqual(validateEventDocument(markdown, coverage).errors, []);
+});
+
+test('escapes standalone fence and block syntax in rendered Markdown fields', () => {
+  const markdown = renderEventMarket([validRecord({
+    id: 'fenced-content', mergeKey: 'fenced-content', analysis: '~~~', workflowImpact: '---', limitations: '```', followUp: '> quoted block',
+  })], { ...coverage, verifiedAt: '2026-07-18' });
+
+  assert.match(markdown, /\n\\~~~\n/);
+  assert.match(markdown, /\n\\---\n/);
+  assert.ok(markdown.includes('\\`\\`\\`'));
+  assert.match(markdown, /\n&gt; quoted block\n/);
+  assert.deepEqual(validateEventDocument(markdown, coverage).errors, []);
+});
+
+test('rejects input and output aliases by case, symlink, and hardlink identity', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'event-market-'));
+  const input = join(directory, 'curation.jsonl');
+  const hardlink = join(directory, 'hardlink.jsonl');
+  const renderArgs = (source, output) => ['render', '--input', source, '--output', output, '--start', coverage.start, '--end', coverage.end, '--verified-at', '2026-07-18'];
+  const aliases = (realpathImpl, statImpl) => ({ platform: 'win32', realpathImpl, statImpl, readFileImpl: async () => { throw new Error('read must not run'); } });
+  try {
+    await writeFile(input, `${JSON.stringify(validRecord())}\n`, 'utf8');
+    await link(input, hardlink);
+    await assert.rejects(() => runCli(renderArgs(input, hardlink)), /input and output must resolve to different files/);
+
+    await assert.rejects(() => runCli(renderArgs(input, input.toUpperCase()), aliases(async (value) => value, async () => ({ dev: 1, ino: 1 }))), /input and output must resolve to different files/);
+    await assert.rejects(() => runCli(renderArgs(join(directory, 'symlink-input'), join(directory, 'symlink-output')), aliases(async () => join(directory, 'target'), async () => ({ dev: 1, ino: 2 }))), /input and output must resolve to different files/);
+    await assert.rejects(() => runCli(renderArgs(join(directory, 'hard-input'), join(directory, 'hard-output')), aliases(async (value) => value, async () => ({ dev: 3, ino: 4 }))), /input and output must resolve to different files/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('requires exact manual-update and verification-date headers plus complete topic index entries', () => {
+  const valid = renderEventMarket([validRecord()], { ...coverage, verifiedAt: '2026-07-18' });
+  assert.match(valid, /> 更新方式：按需手动触发/);
+  assert.match(valid, /> 最后核验日期：2026-07-18/);
+  assert.match(valid, /\[2026-01-01｜Codex workflow update｜OpenAI\]\(#event-openai-codex-workflow-2026\)/);
+
+  const invalid = valid
+    .replace('> 更新方式：按需手动触发，由受控 JSONL 记录经校验后生成。', '> 更新方式：完全自动定时更新。')
+    .replace('> 最后核验日期：2026-07-18', '> 最后核验日期：2026-07-17')
+    .replace('](#event-openai-codex-workflow-2026)', '](#bogus)');
+  const errors = validateEventDocument(invalid, { ...coverage, verifiedAt: '2026-07-18' }).errors.join('\n');
+  assert.match(errors, /invalid update method header/);
+  assert.match(errors, /verification-date header does not match requested date/);
+  assert.match(errors, /topic index link bogus does not target exactly one body anchor/);
+});
+
+test('validates official source links with labels containing escaped closing brackets', () => {
+  const markdown = renderEventMarket([validRecord({
+    id: 'source-label', mergeKey: 'source-label', officialSources: [{ ...validRecord().officialSources[0], label: 'Official ] release' }],
+  })], { ...coverage, verifiedAt: '2026-07-18' });
+
+  assert.match(markdown, /Official \\] release/);
+  assert.deepEqual(validateEventDocument(markdown, coverage).errors, []);
+});
+
+test('cleans partial temporary files and reports cleanup failure with the original error', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'event-market-'));
+  const output = join(directory, 'event_market.md');
+  let partialTemporary = '';
+  try {
+    await assert.rejects(() => atomicWrite(output, 'new', {
+      writeFileImpl: async (temporary) => { partialTemporary = temporary; await writeFile(temporary, 'partial', 'utf8'); throw new Error('write failed after partial file'); },
+    }), /write failed after partial file/);
+    await assert.rejects(() => readFile(partialTemporary, 'utf8'));
+    await assert.rejects(() => atomicWrite(output, 'new', {
+      writeFileImpl: async () => { throw new Error('primary write failure'); },
+      rmImpl: async () => { throw new Error('cleanup failure'); },
+    }), /primary write failure[\s\S]*cleanup failure/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
