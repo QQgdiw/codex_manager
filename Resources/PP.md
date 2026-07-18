@@ -805,24 +805,36 @@ git add Resources\MCP_market.md Resources\tool_market.md
 git commit -m "docs[market]: derive Codex extension catalogs"
 ```
 
-### Task 15: 填充 AI 行业事件市场
+### Task 15: 按需维护工程工作流事件市场
 
 **Files:**
-- Create: `Resources/event_market.md`
+- Modify: `Resources/event_market.md`
+- Use temporary: `.tmp/event-market-audit/curation.jsonl`
+- Use temporary: `.tmp/event-market-audit/event_market.candidate.md`
 
-- [ ] **Step 1: 收集 2026 年以来官方或高可信重大事件**
-- [ ] **Step 2: 按组织和技术方向归组，组内时间倒序**
-- [ ] **Step 3: 分离客观事实、技术剖析、工作流影响和局限**
-- [ ] **Step 4: 核查日期、组织、产品名称和性能数字来源**
-- [ ] **Step 5: 删除与研发者工作明显无关的事件**
-- [ ] **Step 6: 提交**
+- [ ] **Step 1: 按明确时间范围分领域收集已发生事件，只使用官方一手来源**
+- [ ] **Step 2: 合并连续小版本，排除未来预告、泛 AI 和无具体工程价值候选**
+- [ ] **Step 3: 验证 JSONL 总账，确认日期、唯一性、官方来源和完整字段**
+- [ ] **Step 4: 渲染临时候选并执行事实、简体中文两轮独立审阅**
+- [ ] **Step 5: 所有高、中问题回写总账后重新渲染和验证**
+- [ ] **Step 6: 从同一总账原子生成正式文件并复核**
+- [ ] **Step 7: 提交**
 
-事件市场只按用户请求更新，已有事件原则上保留；事实修正需要记录来源变化。
+事件市场只按用户请求更新。保留事件必须能改变用户的嵌入式、硬件、机器人、ROS、EDA/FPGA、边缘 AI、编码 Agent 或工程文档工作；数量不足时不以无关内容补齐。事实修正需要重新打开来源并记录变化。市场收录不修改白名单状态，不构成安装、部署或验证授权。
+
+以下命令中的 `YYYY-MM-DD` 是占位符，执行前必须替换为实际开始日期、结束日期和核验日期。
 
 ```powershell
-git add Resources\event_market.md
-git commit -m "docs[event]: add initial AI engineering timeline"
+node .\scripts\markets\event-market.mjs validate-curation --input .\.tmp\event-market-audit\curation.jsonl --start YYYY-MM-DD --end YYYY-MM-DD
+node .\scripts\markets\event-market.mjs render --input .\.tmp\event-market-audit\curation.jsonl --output .\.tmp\event-market-audit\event_market.candidate.md --start YYYY-MM-DD --end YYYY-MM-DD --verified-at YYYY-MM-DD
+node .\scripts\markets\event-market.mjs validate-doc --input .\.tmp\event-market-audit\event_market.candidate.md --start YYYY-MM-DD --end YYYY-MM-DD
+
+# 两轮审阅通过后，使用同一总账提升正式文件并立即复核。
+node .\scripts\markets\event-market.mjs render --input .\.tmp\event-market-audit\curation.jsonl --output .\Resources\event_market.md --start YYYY-MM-DD --end YYYY-MM-DD --verified-at YYYY-MM-DD
+node .\scripts\markets\event-market.mjs validate-doc --input .\Resources\event_market.md --start YYYY-MM-DD --end YYYY-MM-DD
 ```
+
+任一步失败都保留上一版正式文档，不允许手工绕过验证器修改生成区。
 
 ### Task 16: 生成六类场景配置
 

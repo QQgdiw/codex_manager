@@ -1,11 +1,12 @@
 # 项目协作与市场维护指南
 
-本文档说明当前成果、四份重点市场文档的职责，以及你在后续更新、审批和真实部署时需要做什么。
+本文档说明当前成果、五份市场文档的职责，以及你在后续更新、审批和真实部署时需要做什么。
 
 ## 当前状态
 
 - 首期基础闭环已经完成，市场采集、白名单审批、场景配置、部署计划、分层验证、回滚和凭据保护均有受管入口。
 - `plugins_market.md`、`github_market.md`、`MCP_market.md` 和 `tool_market.md` 已完成首轮质量重建。
+- `event_market.md` 已按工程工作身份重建为经过官方来源复核的事件档案；更新方式为按需手动触发。
 - 2026-07-15 的只读核对中，当前 Codex 只注册了未纳入项目白名单的 `node_repl`。filesystem 与 sequential-thinking 曾通过 static/load/smoke 验证，但当前未注册；重新部署并再次验证前不能称为当前可用。
 - approved context-engineering Skill 的当前受管目标不存在，没有功能性 smoke 证据。
 - 最新测试数量和阶段结论以 `state/README.md`、`state/TODO.md` 和 `state/LOG.md` 为准，不在本指南固化容易过时的计数。
@@ -18,8 +19,9 @@
 | `Resources/github_market.md` | 从 2026-W01 起按周整理、跨周去重的工程开源项目档案 | GitHub 公开元数据、可验证历史来源和明确标注的 C 级近似回溯 |
 | `Resources/MCP_market.md` | GitHub 总表派生的 MCP 候选和当前受管 MCP 基线 | `github_market.md`、白名单、验证记录和只读运行状态 |
 | `Resources/tool_market.md` | GitHub 总表派生的 Skill/Tool 候选和当前受管 Skill 基线 | `github_market.md`、白名单、验证记录和本地受管目标 |
+| `Resources/event_market.md` | 已发生、能改变用户工程工作或决策的事件档案 | 官方公告、官方文档、官方 changelog、官方 release 和标准组织来源 |
 
-Plugins 市场可以独立更新。GitHub 总表更新后，必须再检查 MCP 与 Tool/Skill 派生文档；后两者不得收录 GitHub 总表中不存在的派生项目，也不得重复分类同一仓库。
+Plugins 和事件市场可以分别按需更新。GitHub 总表更新后，必须再检查 MCP 与 Tool/Skill 派生文档；后两者不得收录 GitHub 总表中不存在的派生项目，也不得重复分类同一仓库。
 
 ## 按需更新 Plugins
 
@@ -79,6 +81,22 @@ node .\scripts\markets\github-market.mjs validate --github .\Resources\github_ma
 ```
 
 预期结果为跨周重复 `0`、派生缺失 `0`、未标记条目 `0`，并且命令退出码为 `0`。市场文档还必须分别记录白名单审批、历史验证和当前注册/部署状态，不用较旧的验证记录覆盖较新的只读运行事实。
+
+## 按需更新工程事件市场
+
+事件市场不做定时抓取，仅按需手动更新。收到明确时间范围后，维护者先在 `.tmp/event-market-audit/research/` 分领域收集候选，再合并为一行一个 JSON 对象的 `.tmp/event-market-audit/curation.jsonl`。每个保留项必须已经发生，至少打开并复核一个官方一手来源，并明确它会改变哪项嵌入式、硬件、机器人、ROS、EDA/FPGA、边缘 AI、编码 Agent 或工程文档工作。
+
+同一产品的连续小版本默认合并为阶段事件。只有权限、接口、兼容性、安全边界或工程能力发生独立重大变化时才拆分；模型训练、榜单、融资、未来承诺和泛 AI 宣传不进入正式档案。以下命令中的 `YYYY-MM-DD` 是占位符，执行前必须替换为实际开始日期、结束日期和核验日期：
+
+```powershell
+node .\scripts\markets\event-market.mjs validate-curation --input .\.tmp\event-market-audit\curation.jsonl --start YYYY-MM-DD --end YYYY-MM-DD
+node .\scripts\markets\event-market.mjs render --input .\.tmp\event-market-audit\curation.jsonl --output .\.tmp\event-market-audit\event_market.candidate.md --start YYYY-MM-DD --end YYYY-MM-DD --verified-at YYYY-MM-DD
+node .\scripts\markets\event-market.mjs validate-doc --input .\.tmp\event-market-audit\event_market.candidate.md --start YYYY-MM-DD --end YYYY-MM-DD
+```
+
+候选文档必须完成事实与来源、简体中文与工程价值两轮独立审阅。所有高、中问题都回到 JSONL 总账修正并重新渲染；不得只改生成的 Markdown。候选全部通过后，使用同一条 `render` 命令把输出改为 `Resources/event_market.md`，随后立即运行 `validate-doc`。
+
+采集、人工复核、渲染或验证任一步失败，都保留上一版正式文档。用户不需要手工编辑 JSONL 或生成区，只需确认范围、审阅策展结果和指出事实或价值判断问题。事件收录仍是信息整理，不会修改白名单、批准部署或触发工具安装。
 
 ## 人工审批边界
 
