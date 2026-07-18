@@ -113,6 +113,7 @@ test('renders topic indexes, grouped records, and deterministic organization ord
   assert.match(markdown, /<!-- event-record:\{"id":"a-medium","date":"2026-01-03","organization":"Alpha"\} -->/);
   assert.ok(markdown.indexOf('## Beta') < markdown.indexOf('## Alpha'));
   assert.ok(markdown.indexOf('## Alpha') < markdown.indexOf('## Zeta'));
+  assert.equal((markdown.match(/\[2026-01-03｜Codex workflow update｜Alpha\]\(#event-a-medium\)/g) ?? []).length, 2);
   assert.ok(markdown.indexOf('### Codex workflow update') < markdown.indexOf('### Codex workflow update', markdown.indexOf('### Codex workflow update') + 1));
   assert.match(markdown, /#### 客观事实[\s\S]*#### 技术剖析[\s\S]*#### 工作流影响[\s\S]*#### 局限与风险[\s\S]*#### 后续关注/);
   assert.match(markdown, /https:\/\/example\.com\/official/);
@@ -311,8 +312,8 @@ test('requires every event anchor exactly once in the topic index and binds body
 
   const missingErrors = validateEventDocument(missingAndTampered, coverage).errors.join('\n');
   assert.match(missingErrors, /body event title is not bound to its marker/);
-  assert.match(missingErrors, /event anchor must be referenced exactly once in topic index/);
-  assert.match(validateEventDocument(duplicate, coverage).errors.join('\n'), /event anchor must be referenced exactly once in topic index/);
+  assert.match(missingErrors, /event anchor must be referenced by at least one topic index/);
+  assert.match(validateEventDocument(duplicate, coverage).errors.join('\n'), /duplicate event link in topic coding-agent/);
 });
 
 test('rejects input and output aliases by case, symlink, and hardlink identity', async () => {

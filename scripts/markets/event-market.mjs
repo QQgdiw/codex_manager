@@ -208,7 +208,7 @@ export function renderEventMarket(records, metadata = {}) {
   ];
   for (const topic of TOPICS) lines.push(`- [${escapeMarkdownText(TOPIC_LABELS[topic])}](#topic-${topic})`);
   for (const topic of TOPICS) {
-    const topicRecords = sortRecords(checked.kept.filter((record) => record.topics[0] === topic));
+    const topicRecords = sortRecords(checked.kept.filter((record) => record.topics.includes(topic)));
     lines.push('', `<a id="topic-${topic}"></a>`, `**${escapeMarkdownText(TOPIC_LABELS[topic])}**`);
     if (!topicRecords.length) lines.push('- 暂无通过复核的事件。');
     for (const record of topicRecords) lines.push(`- [${topicIndexLabel(record)}](#${eventAnchor(record.id)})`);
@@ -357,7 +357,14 @@ export function validateEventDocument(markdown, options = {}) {
   const topicIndexEnd = lines.findIndex((line, index) => index > topicIndexStart && /^##\s+/.test(line));
   const topicIndexLines = lines.slice(topicIndexStart + 1, topicIndexEnd < 0 ? undefined : topicIndexEnd);
   const topicReferenceCounts = new Map(records.map((record) => [eventAnchor(record.id), 0]));
+  const topicEventReferences = new Set();
+  let currentTopic = null;
   for (const line of topicIndexLines) {
+    const topicAnchor = /^<a id="topic-([a-z0-9-]+)"><\/a>$/.exec(line);
+    if (topicAnchor) {
+      currentTopic = TOPICS.includes(topicAnchor[1]) ? topicAnchor[1] : null;
+      continue;
+    }
     if (!line.startsWith('- [')) continue;
     const link = parseMarkdownLink(line);
     if (!link || !link.target.startsWith('#')) {
@@ -369,10 +376,16 @@ export function validateEventDocument(markdown, options = {}) {
     const record = recordsByAnchor.get(anchor);
     if (record) {
       topicReferenceCounts.set(anchor, topicReferenceCounts.get(anchor) + 1);
+      if (!currentTopic) errors.push(`${record.id}: event link is outside a topic index`);
+      else {
+        const reference = `${currentTopic}:${anchor}`;
+        if (topicEventReferences.has(reference)) errors.push(`${record.id}: duplicate event link in topic ${currentTopic}`);
+        topicEventReferences.add(reference);
+      }
       if (link.label !== `${record.date}｜${record.bodyTitle}｜${escapeMarkdownText(record.organization)}`) errors.push(`${record.id}: body event title is not bound to its marker`);
     }
   }
-  for (const [anchor, count] of topicReferenceCounts) if (count !== 1) errors.push(`${anchor}: event anchor must be referenced exactly once in topic index`);
+  for (const [anchor, count] of topicReferenceCounts) if (count < 1) errors.push(`${anchor}: event anchor must be referenced by at least one topic index`);
   const byOrganization = new Map();
   for (const record of records) byOrganization.set(record.organization, [...(byOrganization.get(record.organization) ?? []), record]);
   for (const [name, group] of byOrganization) {
