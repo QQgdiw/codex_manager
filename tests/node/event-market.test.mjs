@@ -1,15 +1,25 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 
 import {
+  atomicWrite,
   renderEventMarket,
   runCli,
   validateCurationRecords,
   validateEventDocument,
 } from '../../scripts/markets/event-market.mjs';
+
+function runProcess(command, args) {
+  return new Promise((resolveProcess, reject) => {
+    const child = spawn(command, args, { stdio: 'ignore' });
+    child.once('error', reject);
+    child.once('close', (code) => resolveProcess(code));
+  });
+}
 
 function validRecord(overrides = {}) {
   return {
@@ -74,7 +84,7 @@ test('requires valid keep fields, enumerations, and official HTTPS sources', () 
   ], coverage);
 
   assert.match(result.errors.join('\n'), /empty-source: officialSources must not be empty/);
-  assert.match(result.errors.join('\n'), /http-source: officialSources\[0\]\.url must be HTTPS/);
+  assert.match(result.errors.join('\n'), /http-source: officialSources\[0\]\.url must be a valid HTTPS URL/);
   assert.match(result.errors.join('\n'), /bad-topic: unknown topic: unknown/);
   assert.match(result.errors.join('\n'), /bad-source-type: officialSources\[0\]\.type is invalid/);
   assert.match(result.errors.join('\n'), /future: keep records must have occurred: true/);
@@ -99,7 +109,7 @@ test('renders topic indexes, grouped records, and deterministic organization ord
   ], { ...coverage, verifiedAt: '2026-07-18' });
 
   assert.match(markdown, /## 主题索引/);
-  assert.match(markdown, /\[Coding Agent\]\(#topic-coding-agent\)/);
+  assert.match(markdown, /\[编码智能体\]\(#topic-coding-agent\)/);
   assert.match(markdown, /<!-- event-record:{"id":"a-medium","date":"2026-01-03","organization":"Alpha"} -->/);
   assert.ok(markdown.indexOf('## Beta') < markdown.indexOf('## Alpha'));
   assert.ok(markdown.indexOf('## Alpha') < markdown.indexOf('## Zeta'));
@@ -129,6 +139,130 @@ test('does not replace an existing output when render validation fails', async (
     await writeFile(output, 'previous document\n', 'utf8');
     await assert.rejects(() => runCli(['render', '--input', input, '--output', output, '--start', coverage.start, '--end', coverage.end, '--verified-at', '2026-07-18']));
     assert.equal(await readFile(output, 'utf8'), 'previous document\n');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('rejects unsafe JSONL fields and malformed official URLs before rendering', () => {
+  const result = validateCurationRecords([
+    validRecord({ id: 'Not-A-Slug', mergeKey: 'bad-id' }),
+    validRecord({ id: 'marker-injection', organization: 'OpenAI --> <!-- injected', mergeKey: 'marker-injection' }),
+    validRecord({ id: 'control-injection', title: 'line\nbreak', mergeKey: 'control-injection' }),
+    validRecord({ id: 'url-no-host', officialSources: [{ ...validRecord().officialSources[0], url: 'https:' }], mergeKey: 'url-no-host' }),
+    validRecord({ id: 'url-control', officialSources: [{ ...validRecord().officialSources[0], url: 'https://example.com/\nattack' }], mergeKey: 'url-control' }),
+  ], coverage);
+
+  const errors = result.errors.join('\n');
+  assert.match(errors, /Not-A-Slug: id must be a stable lowercase slug/);
+  assert.match(errors, /marker-injection: organization contains unsafe marker text/);
+  assert.match(errors, /control-injection: title contains control characters/);
+  assert.match(errors, /url-no-host: officialSources\[0\]\.url must be a valid HTTPS URL/);
+  assert.match(errors, /url-control: officialSources\[0\]\.url must be a valid HTTPS URL/);
+});
+
+test('escapes Markdown text, uses non-colliding anchors, and renders normalized URL targets', () => {
+  const markdown = renderEventMarket([
+    validRecord({ id: 'event-one', title: 'Title [x] *bold*', organization: 'A & B', mergeKey: 'event-one', officialSources: [{ ...validRecord().officialSources[0], url: 'https://example.com/a(b)' }] }),
+    validRecord({ id: 'event-two', title: 'Other', mergeKey: 'event-two' }),
+  ], { ...coverage, verifiedAt: '2026-07-18' });
+
+  assert.match(markdown, /<a id="event-event-one"><\/a>/);
+  assert.match(markdown, /<a id="event-event-two"><\/a>/);
+  assert.ok(markdown.includes('Title \\[x\\] \\*bold\\*'));
+  assert.match(markdown, /\[Official announcement\]\(<https:\/\/example\.com\/a\(b\)>\)/);
+  assert.deepEqual(validateEventDocument(markdown, coverage).errors, []);
+});
+
+test('keeps physical JSONL line numbers and rejects resolved identical paths', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'event-market-'));
+  const input = join(directory, 'curation.jsonl');
+  try {
+    await writeFile(input, `\n${JSON.stringify(validRecord())}\n{invalid}\n`, 'utf8');
+    await assert.rejects(
+      () => runCli(['validate-curation', '--input', input, '--start', coverage.start, '--end', coverage.end]),
+      /line 3: invalid JSON/,
+    );
+    await assert.rejects(
+      () => runCli(['render', '--input', input, '--output', resolve(input), '--start', coverage.start, '--end', coverage.end, '--verified-at', '2026-07-18']),
+      /input and output must resolve to different paths/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('sorts unordered records with a locale-independent code-point comparator', () => {
+  const markdown = renderEventMarket([
+    validRecord({ id: 'z-event', organization: 'Zulu', date: '2026-01-01', mergeKey: 'z-event' }),
+    validRecord({ id: 'a-event', organization: 'Alpha', date: '2026-01-01', mergeKey: 'a-event' }),
+  ], { ...coverage, verifiedAt: '2026-07-18' });
+  assert.ok(markdown.indexOf('## Alpha') < markdown.indexOf('## Zulu'));
+});
+
+test('validates header metadata, topic links, unique anchors, and every event block', () => {
+  const valid = renderEventMarket([validRecord()], { ...coverage, verifiedAt: '2026-07-18' });
+  assert.deepEqual(validateEventDocument(valid, coverage).errors, []);
+
+  const invalid = valid
+    .replace('> 收录数量：1', '> 收录数量：0')
+    .replace('](#event-openai-codex-workflow-2026)', '](#event-missing)')
+    .replace('<a id="event-openai-codex-workflow-2026"></a>', '<a id="event-openai-codex-workflow-2026"></a>\n<a id="event-openai-codex-workflow-2026"></a>')
+    .replace(/#### 官方来源\n[^\n]+/, '#### 官方来源')
+    .replace(/#### 技术剖析\n[^\n]+/, '#### 技术剖析');
+  const errors = validateEventDocument(invalid, coverage).errors.join('\n');
+  assert.match(errors, /header record count does not match event markers/);
+  assert.match(errors, /duplicate anchor: event-openai-codex-workflow-2026/);
+  assert.match(errors, /topic index link .* does not target exactly one event anchor/);
+  assert.match(errors, /missing or empty 技术剖析 section/);
+  assert.match(errors, /missing official source/);
+});
+
+test('rejects actual unordered event blocks', () => {
+  const valid = renderEventMarket([
+    validRecord({ id: 'newer', date: '2026-01-02', mergeKey: 'newer' }),
+    validRecord({ id: 'older', date: '2026-01-01', mergeKey: 'older' }),
+  ], { ...coverage, verifiedAt: '2026-07-18' });
+  const newerStart = valid.indexOf('<a id="event-newer"></a>');
+  const olderStart = valid.indexOf('<a id="event-older"></a>');
+  const newerBlock = valid.slice(newerStart, olderStart);
+  const olderBlock = valid.slice(olderStart);
+  const unordered = `${valid.slice(0, newerStart)}${olderBlock}${newerBlock}`;
+  assert.match(validateEventDocument(unordered, coverage).errors.join('\n'), /records are not sorted by date descending and id/);
+});
+
+test('cleans temporary files and preserves the old document when injected writes or renames fail', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'event-market-'));
+  const output = join(directory, 'event_market.md');
+  const removed = [];
+  try {
+    await writeFile(output, 'previous document\n', 'utf8');
+    await assert.rejects(() => atomicWrite(output, 'new', {
+      writeFileImpl: async (temporary) => { throw new Error(`write failed: ${temporary}`); },
+      rmImpl: async (temporary) => { removed.push(temporary); },
+    }), /write failed/);
+    await assert.rejects(() => atomicWrite(output, 'new', {
+      writeFileImpl: writeFile,
+      renameImpl: async () => { throw new Error('rename failed'); },
+      rmImpl: async (temporary) => { removed.push(temporary); await rm(temporary, { force: true }); },
+    }), /rename failed/);
+    assert.equal(await readFile(output, 'utf8'), 'previous document\n');
+    assert.equal(removed.length, 2);
+    for (const temporary of removed) await assert.rejects(() => readFile(temporary, 'utf8'));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('CLI process returns exit code 2 for invalid JSONL', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'event-market-'));
+  const input = join(directory, 'curation.jsonl');
+  try {
+    await writeFile(input, '{invalid}\n', 'utf8');
+    const code = await runProcess(process.execPath, [
+      resolve('scripts/markets/event-market.mjs'), 'validate-curation', '--input', input, '--start', coverage.start, '--end', coverage.end,
+    ]);
+    assert.equal(code, 2);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

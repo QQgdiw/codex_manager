@@ -186,8 +186,12 @@ Describe 'Market scripts' {
     It 'runs the event market Node tests' {
         $repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
         $testPath = Join-Path $repositoryRoot 'tests\node\event-market.test.mjs'
-        $output = & node --test $testPath 2>&1
+        $logDirectory = Join-Path $repositoryRoot '.tmp\event-market-audit\logs'
+        New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+        $logPath = Join-Path $logDirectory 'pester-event-market-node.log'
+        & node --test $testPath *> $logPath
         $exitCode = $LASTEXITCODE
+        $output = Get-Content -LiteralPath $logPath
 
         if ($exitCode -ne 0) {
             $tail = @($output | Select-Object -Last 20) -join [Environment]::NewLine
