@@ -3,7 +3,7 @@ import { readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promise
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const TOPICS = ['coding-agent', 'extension-security', 'robotics-ros', 'embedded-edge', 'eda-fpga-chip', 'engineering-docs'];
+const TOPICS = ['robotics-ros', 'embedded-edge', 'eda-fpga-chip', 'engineering-docs', 'coding-agent', 'extension-security'];
 const TOPIC_LABELS = {
   'coding-agent': '编码智能体',
   'extension-security': '扩展安全',
@@ -20,6 +20,18 @@ const PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
 function isObject(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function nonEmptyString(value) { return typeof value === 'string' && value.trim().length > 0; }
 function hasControlCharacters(value) { return /[\u0000-\u001F\u007F]/.test(String(value)); }
+function hasUnpairedSurrogate(value) {
+  const text = String(value);
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code >= 0xD800 && code <= 0xDBFF) {
+      const next = text.charCodeAt(index + 1);
+      if (!(next >= 0xDC00 && next <= 0xDFFF)) return true;
+      index += 1;
+    } else if (code >= 0xDC00 && code <= 0xDFFF) return true;
+  }
+  return false;
+}
 function isStableSlug(value) { return typeof value === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value); }
 function compareText(left, right) { return left === right ? 0 : left < right ? -1 : 1; }
 function validDate(value) {
@@ -40,6 +52,7 @@ function recordMarker(record) {
   return `<!-- event-record:${markerPayload(record)} -->`;
 }
 function eventAnchor(id) { return `event-${id}`; }
+function organizationAnchor(organization) { return `organization-${Buffer.from(organization, 'utf8').toString('base64url')}`; }
 function escapeHtml(value) { return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function escapeMarkdownText(value) {
   const escaped = escapeHtml(value).replace(/([\\`*_{}\[\]()#+.!|])/g, '\\$1');
@@ -83,6 +96,21 @@ function parseMarkdownLink(line) {
   return { label: line.slice(3, labelEnd), target: line.slice(targetStart, targetEnd), end: targetEnd + 1 };
 }
 
+function parseMarkdownLinks(line) {
+  const links = [];
+  let cursor = 0;
+  while ((cursor = line.indexOf('[', cursor)) >= 0) {
+    const labelEnd = findUnescaped(line, ']', cursor + 1);
+    if (labelEnd < 0 || line[labelEnd + 1] !== '(') { cursor += 1; continue; }
+    const targetStart = labelEnd + 2;
+    const targetEnd = findUnescaped(line, ')', targetStart);
+    if (targetEnd < 0) break;
+    links.push({ label: line.slice(cursor + 1, labelEnd), target: line.slice(targetStart, targetEnd) });
+    cursor = targetEnd + 1;
+  }
+  return links;
+}
+
 function validOfficialUrl(value) {
   if (!nonEmptyString(value) || hasControlCharacters(value) || !/^https:\/\//i.test(value)) return null;
   try {
@@ -96,6 +124,7 @@ function validOfficialUrl(value) {
 function checkText(errors, label, field, value) {
   if (typeof value !== 'string') return;
   if (hasControlCharacters(value)) errors.push(`${label}: ${field} contains control characters`);
+  if (hasUnpairedSurrogate(value)) errors.push(`${label}: ${field} contains an unpaired UTF-16 surrogate`);
 }
 
 function checkDate(errors, label, value, options, field = 'date') {
@@ -151,7 +180,14 @@ export function validateCurationRecords(records, options = {}) {
     if (!Array.isArray(record.partners) || !record.partners.every(nonEmptyString)) localErrors.push(`${label}: partners must be an array of strings`);
     else record.partners.forEach((partner, index) => checkText(localErrors, label, `partners[${index}]`, partner));
     if (!Array.isArray(record.topics) || record.topics.length === 0) localErrors.push(`${label}: topics must not be empty`);
-    else record.topics.forEach((topic) => { if (!TOPICS.includes(topic)) localErrors.push(`${label}: unknown topic: ${topic}`); });
+    else {
+      const seenTopics = new Set();
+      record.topics.forEach((topic) => {
+        if (!TOPICS.includes(topic)) localErrors.push(`${label}: unknown topic: ${topic}`);
+        if (seenTopics.has(topic)) localErrors.push(`${label}: duplicate topic: ${topic}`);
+        seenTopics.add(topic);
+      });
+    }
     if (!PRIORITIES.includes(record.priority)) localErrors.push(`${label}: priority is invalid`);
     if (!Array.isArray(record.facts) || record.facts.length === 0 || !record.facts.every(nonEmptyString)) localErrors.push(`${label}: facts must be a non-empty array of strings`);
     else record.facts.forEach((fact, index) => checkText(localErrors, label, `facts[${index}]`, fact));
@@ -193,6 +229,7 @@ function sortOrganizations(records) {
 export function renderEventMarket(records, metadata = {}) {
   const checked = validateCurationRecords(records, metadata);
   if (checked.errors.length) throw error(checked.errors.join('\n'));
+  const organizations = sortOrganizations(checked.kept);
   const lines = [
     '# 工程工作流事件市场',
     '',
@@ -205,16 +242,31 @@ export function renderEventMarket(records, metadata = {}) {
     '',
     '## 主题索引',
     '',
+    '同一事件可进入多个主题，计数为索引引用数，不等于唯一事件数。',
+    '',
   ];
-  for (const topic of TOPICS) lines.push(`- [${escapeMarkdownText(TOPIC_LABELS[topic])}](#topic-${topic})`);
+  for (const topic of TOPICS) lines.push(`- [${escapeMarkdownText(TOPIC_LABELS[topic])}（${checked.summary.topics[topic]}）](#topic-${topic})`);
   for (const topic of TOPICS) {
     const topicRecords = sortRecords(checked.kept.filter((record) => record.topics.includes(topic)));
-    lines.push('', `<a id="topic-${topic}"></a>`, `**${escapeMarkdownText(TOPIC_LABELS[topic])}**`);
+    lines.push('', `<a id="topic-${topic}"></a>`, `**${escapeMarkdownText(TOPIC_LABELS[topic])}（${topicRecords.length}）**`);
     if (!topicRecords.length) lines.push('- 暂无通过复核的事件。');
     for (const record of topicRecords) lines.push(`- [${topicIndexLabel(record)}](#${eventAnchor(record.id)})`);
+    if (topic === 'engineering-docs' && topicRecords.length <= 1) {
+      lines.push(`本期工程文档方向仅有 ${topicRecords.length} 项通过官方来源与工程价值复核，未用泛文档 AI 新闻补数。`);
+    }
   }
-  for (const [organization, group] of sortOrganizations(checked.kept)) {
-    lines.push('', `## ${escapeMarkdownText(organization)}`);
+  lines.push(
+    '',
+    '## 组织导航',
+    '',
+    ...organizations.map(([organization]) => `- [${escapeMarkdownText(organization)}](#${organizationAnchor(organization)})`),
+    '',
+    '## 组织归档',
+    '',
+    '组织按最高优先级、最新事件日期、组织名排序；组内按日期倒序，再按事件 ID 排序。',
+  );
+  for (const [organization, group] of organizations) {
+    lines.push('', `<a id="${organizationAnchor(organization)}"></a>`, `## ${escapeMarkdownText(organization)}`);
     for (const record of group) {
       lines.push(
         '',
@@ -225,7 +277,7 @@ export function renderEventMarket(records, metadata = {}) {
         `- 日期：${record.date}`,
         `- 标题：${escapeMarkdownText(record.title)}`,
         `- 优先级：${record.priority}`,
-        `- 主题：${record.topics.map((topic) => escapeMarkdownText(TOPIC_LABELS[topic])).join('、')}`,
+        `- 主题：${TOPICS.filter((topic) => record.topics.includes(topic)).map((topic) => escapeMarkdownText(TOPIC_LABELS[topic])).join('、')}`,
         `- 协作方：${record.partners.length ? record.partners.map(escapeMarkdownText).join('、') : '无'}`,
         '',
         '#### 客观事实',
@@ -257,7 +309,8 @@ export function validateEventDocument(markdown, options = {}) {
   const lines = markdown.split(/\r?\n/);
   const records = [];
   const ids = new Set();
-  const organizationOrder = [];
+  const archiveHeadingIndex = lines.indexOf('## 组织归档');
+  const organizationHeadings = [];
   const eventHeadings = [];
   const markerLines = [];
   const anchors = new Map();
@@ -284,9 +337,12 @@ export function validateEventDocument(markdown, options = {}) {
   if (!countHeader) errors.push('missing document header: 收录数量');
   for (let index = 0; index < lines.length; index += 1) {
     const section = /^##\s+(.+?)\s*$/.exec(lines[index]);
-    if (section && section[1] !== '主题索引') {
+    if (section && index > archiveHeadingIndex && !['主题索引', '组织导航', '组织归档'].includes(section[1])) {
       organization = section[1];
-      organizationOrder.push(organization);
+      const precedingAnchor = /^<a id="(organization-[^"]+)"><\/a>$/.exec(lines[index - 1] ?? '')?.[1] ?? null;
+      organizationHeadings.push({ label: organization, anchor: precedingAnchor, index });
+    } else if (section) {
+      organization = null;
     }
     if (/^###\s+/.test(lines[index])) {
       eventHeadings.push({ line: index + 1, title: lines[index].replace(/^###\s+/, '') });
@@ -305,7 +361,7 @@ export function validateEventDocument(markdown, options = {}) {
       const record = parseMarkerPayload(marker[1]);
       const label = record.id || `line ${index + 1}`;
       if (!isStableSlug(record.id)) errors.push(`${label}: marker id must be a stable lowercase slug`);
-      if (!nonEmptyString(record.organization) || hasControlCharacters(record.organization)) errors.push(`${label}: marker organization is unsafe`);
+      if (!nonEmptyString(record.organization) || hasControlCharacters(record.organization) || hasUnpairedSurrogate(record.organization)) errors.push(`${label}: marker organization is unsafe`);
       const heading = /^###\s+(.+)$/.exec(lines[index - 1] ?? '');
       if (!heading) errors.push(`${label}: marker must immediately follow an event heading`);
       if (!isStableSlug(record.id) || !nonEmptyString(record.organization) || !heading || !checkDate(errors, label, record.date, options)) {
@@ -313,7 +369,7 @@ export function validateEventDocument(markdown, options = {}) {
       }
       if (ids.has(record.id)) errors.push(`${record.id}: duplicate event-record marker`);
       ids.add(record.id);
-      if (organization !== escapeMarkdownText(record.organization)) errors.push(`${record.id}: marker organization does not match its section`);
+      if (organization !== escapeMarkdownText(record.organization)) errors.push(`${record.id}: marker organization does not match its organization block`);
       if ((anchors.get(eventAnchor(record.id)) ?? []).length !== 1) errors.push(`${record.id}: event anchor must exist exactly once`);
       if (lines[index - 2] !== `<a id="${eventAnchor(record.id)}"></a>`) errors.push(`${record.id}: event anchor must immediately precede its heading`);
       const nextHeading = lines.findIndex((line, lineIndex) => lineIndex > index && /^#{2,3}\s+/.test(line));
@@ -322,6 +378,10 @@ export function validateEventDocument(markdown, options = {}) {
       if (!eventLines.includes(`- 标题：${heading[1]}`)) errors.push(`${record.id}: body event title is not bound to its marker`);
       const priority = /^- 优先级：(high|medium|low)$/.exec(eventLines.find((line) => line.startsWith('- 优先级：')) ?? '')?.[1];
       if (!priority) errors.push(`${record.id}: missing or invalid priority`);
+      const bodyTopicLines = eventLines.filter((line) => line.startsWith('- 主题：'));
+      let bodyTopicDisplay = null;
+      if (bodyTopicLines.length !== 1) errors.push(`${record.id}: body must contain exactly one topic field`);
+      else bodyTopicDisplay = bodyTopicLines[0].slice('- 主题：'.length);
       const sectionContent = (heading) => {
         const headingIndex = eventLines.indexOf(heading);
         if (headingIndex < 0) return [];
@@ -339,7 +399,7 @@ export function validateEventDocument(markdown, options = {}) {
         const sourceLink = parseMarkdownLink(source);
         if (!sourceLink || !validOfficialUrl(sourceLink.target)) errors.push(`${record.id}: invalid official source`);
       }
-      records.push({ ...record, bodyTitle: heading[1], sectionOrganization: organization, priority, line: index + 1 });
+      records.push({ ...record, bodyTitle: heading[1], bodyTopicDisplay, sectionOrganization: organization, priority, line: index + 1 });
     } catch {
       errors.push(`line ${index + 1}: invalid event-record marker`);
     }
@@ -351,19 +411,29 @@ export function validateEventDocument(markdown, options = {}) {
   const recordsByAnchor = new Map(records.map((record) => [eventAnchor(record.id), record]));
   for (const topic of TOPICS) {
     if ((anchors.get(`topic-${topic}`) ?? []).length !== 1) errors.push(`missing or duplicate topic anchor: ${topic}`);
-    if (!markdown.includes(`[${escapeMarkdownText(TOPIC_LABELS[topic])}](#topic-${topic})`)) errors.push(`missing topic index entry: ${topic}`);
   }
+  const multiTopicNotice = '同一事件可进入多个主题，计数为索引引用数，不等于唯一事件数。';
+  if (!lines.includes(multiTopicNotice)) errors.push('missing multi-topic reference count notice');
   const topicIndexStart = lines.findIndex((line) => line === '## 主题索引');
   const topicIndexEnd = lines.findIndex((line, index) => index > topicIndexStart && /^##\s+/.test(line));
   const topicIndexLines = lines.slice(topicIndexStart + 1, topicIndexEnd < 0 ? undefined : topicIndexEnd);
   const topicReferenceCounts = new Map(records.map((record) => [eventAnchor(record.id), 0]));
+  const indexedTopicsByAnchor = new Map(records.map((record) => [eventAnchor(record.id), new Set()]));
+  const topicCounts = new Map(TOPICS.map((topic) => [topic, 0]));
   const topicEventReferences = new Set();
+  const topicAnchorOrder = [];
+  const topicNavigationOrder = [];
   let currentTopic = null;
   for (const line of topicIndexLines) {
     const topicAnchor = /^<a id="topic-([a-z0-9-]+)"><\/a>$/.exec(line);
     if (topicAnchor) {
       currentTopic = TOPICS.includes(topicAnchor[1]) ? topicAnchor[1] : null;
+      if (currentTopic) topicAnchorOrder.push(currentTopic);
       continue;
+    }
+    if (currentTopic && line.startsWith('**')) {
+      const expectedPrefix = `**${escapeMarkdownText(TOPIC_LABELS[currentTopic])}（`;
+      if (!line.startsWith(expectedPrefix) || !/^\*\*.+（\d+）\*\*$/.test(line)) errors.push(`topic ${currentTopic} is missing its reference count title`);
     }
     if (!line.startsWith('- [')) continue;
     const link = parseMarkdownLink(line);
@@ -372,6 +442,7 @@ export function validateEventDocument(markdown, options = {}) {
       continue;
     }
     const anchor = link.target.slice(1);
+    if (anchor.startsWith('topic-')) topicNavigationOrder.push(anchor.slice('topic-'.length));
     if ((anchors.get(anchor) ?? []).length !== 1) errors.push(`topic index link ${anchor} does not target exactly one body anchor`);
     const record = recordsByAnchor.get(anchor);
     if (record) {
@@ -381,21 +452,97 @@ export function validateEventDocument(markdown, options = {}) {
         const reference = `${currentTopic}:${anchor}`;
         if (topicEventReferences.has(reference)) errors.push(`${record.id}: duplicate event link in topic ${currentTopic}`);
         topicEventReferences.add(reference);
+        topicCounts.set(currentTopic, topicCounts.get(currentTopic) + 1);
+        indexedTopicsByAnchor.get(anchor).add(currentTopic);
       }
       if (link.label !== `${record.date}｜${record.bodyTitle}｜${escapeMarkdownText(record.organization)}`) errors.push(`${record.id}: body event title is not bound to its marker`);
     }
   }
+  if (topicAnchorOrder.length !== TOPICS.length || topicAnchorOrder.some((topic, index) => topic !== TOPICS[index])) errors.push('topics are not in the required user-role order');
+  if (topicNavigationOrder.length !== TOPICS.length || topicNavigationOrder.some((topic, index) => topic !== TOPICS[index])) errors.push('topic navigation entries are not in the required user-role order');
+  for (const topic of TOPICS) {
+    const count = topicCounts.get(topic);
+    const title = `**${escapeMarkdownText(TOPIC_LABELS[topic])}（${count}）**`;
+    if (!topicIndexLines.includes(title)) errors.push(`topic ${topic} count does not match index references`);
+    const navigation = `- [${escapeMarkdownText(TOPIC_LABELS[topic])}（${count}）](#topic-${topic})`;
+    if (!topicIndexLines.includes(navigation)) errors.push(`missing or incorrect topic index entry: ${topic}`);
+  }
+  const engineeringCount = topicCounts.get('engineering-docs');
+  const sparseNoticePattern = /^本期工程文档方向仅有 (\d+) 项通过官方来源与工程价值复核，未用泛文档 AI 新闻补数。$/;
+  const sparseNotice = topicIndexLines.find((line) => sparseNoticePattern.test(line));
+  if (engineeringCount <= 1 && !sparseNotice) errors.push('missing engineering-docs sparse coverage notice');
+  if (sparseNotice && Number(sparseNoticePattern.exec(sparseNotice)[1]) !== engineeringCount) errors.push('engineering-docs sparse coverage notice count does not match index references');
+  if (engineeringCount > 1 && sparseNotice) errors.push('engineering-docs sparse coverage notice is forbidden when count exceeds 1');
   for (const [anchor, count] of topicReferenceCounts) if (count < 1) errors.push(`${anchor}: event anchor must be referenced by at least one topic index`);
+  for (const record of records) {
+    const indexedTopics = indexedTopicsByAnchor.get(eventAnchor(record.id)) ?? new Set();
+    const expectedTopicDisplay = TOPICS
+      .filter((topic) => indexedTopics.has(topic))
+      .map((topic) => escapeMarkdownText(TOPIC_LABELS[topic]))
+      .join('、');
+    if (record.bodyTopicDisplay !== expectedTopicDisplay) errors.push(`${record.id}: body topics do not match indexed topics`);
+  }
+
+  const archiveRule = '组织按最高优先级、最新事件日期、组织名排序；组内按日期倒序，再按事件 ID 排序。';
+  if (!lines.includes(archiveRule)) errors.push('missing organization archive sorting rule');
+  const navigationStart = lines.indexOf('## 组织导航');
+  const archiveStart = lines.indexOf('## 组织归档');
+  const navigationLines = navigationStart >= 0 && archiveStart > navigationStart ? lines.slice(navigationStart + 1, archiveStart) : [];
+  if (navigationStart < 0 || archiveStart < 0) errors.push('missing organization navigation or archive section');
+  const navigationContentLines = navigationLines.filter((line) => line.trim());
+  if (navigationContentLines.some((line) => {
+    const links = parseMarkdownLinks(line);
+    const link = parseMarkdownLink(line);
+    return links.length !== 1 || !link || link.end !== line.length;
+  })) errors.push('organization navigation must use one bullet per organization');
+  const navigationLinks = navigationLines.flatMap(parseMarkdownLinks).filter((link) => link.target.startsWith('#'));
+  const navigationNames = new Map();
+  for (const link of navigationLinks) {
+    navigationNames.set(link.label, (navigationNames.get(link.label) ?? 0) + 1);
+    if ((navigationNames.get(link.label) ?? 0) > 1) errors.push(`duplicate organization navigation entry: ${link.label}`);
+  }
+  const headingCounts = new Map();
+  for (const heading of organizationHeadings) {
+    headingCounts.set(heading.label, (headingCounts.get(heading.label) ?? 0) + 1);
+    if (headingCounts.get(heading.label) > 1) errors.push(`duplicate organization heading: ${heading.label}`);
+    const matchingLinks = navigationLinks.filter((link) => link.label === heading.label);
+    if (matchingLinks.length !== 1 || !heading.anchor || matchingLinks[0].target !== `#${heading.anchor}`) {
+      errors.push(`organization heading ${heading.label} is not bound to a unique navigation entry and anchor`);
+    }
+  }
+  for (const [anchor, positions] of anchors) {
+    if (!anchor.startsWith('organization-')) continue;
+    for (const position of positions) {
+      const heading = /^##\s+(.+?)\s*$/.exec(lines[position] ?? '')?.[1];
+      if (!heading || !organizationHeadings.some((entry) => entry.index === position && entry.anchor === anchor)) errors.push(`organization anchor ${anchor} must immediately precede exactly one organization heading`);
+    }
+  }
   const byOrganization = new Map();
   for (const record of records) byOrganization.set(record.organization, [...(byOrganization.get(record.organization) ?? []), record]);
+  for (const name of byOrganization.keys()) {
+    const label = escapeMarkdownText(name);
+    const expectedAnchor = organizationAnchor(name);
+    const matchingLinks = navigationLinks.filter((link) => link.label === label);
+    const matchingHeadings = organizationHeadings.filter((heading) => heading.label === label);
+    if (!matchingLinks.length) errors.push(`organization navigation is missing ${label}`);
+    for (const link of matchingLinks) if (link.target !== `#${expectedAnchor}`) errors.push(`organization navigation link ${link.target.slice(1)} does not target its body organization anchor`);
+    if ((anchors.get(expectedAnchor) ?? []).length !== 1) errors.push(`organization ${label}: body anchor must exist exactly once`);
+    if (matchingHeadings.length !== 1 || matchingHeadings[0].anchor !== expectedAnchor) errors.push(`organization ${label}: body anchor must immediately precede its unique heading`);
+  }
+  for (const link of navigationLinks) {
+    if (![...byOrganization.keys()].some((name) => escapeMarkdownText(name) === link.label)) errors.push(`organization navigation has unknown entry: ${link.label}`);
+  }
+  if (navigationLinks.length !== byOrganization.size) errors.push('organization navigation has duplicate or omitted entries');
   for (const [name, group] of byOrganization) {
     const expected = sortRecords(group);
     if (group.some((record, index) => record.id !== expected[index].id)) errors.push(`organization ${name}: records are not sorted by date descending and id`);
   }
-  const renderedOrganizations = new Set([...byOrganization.keys()].map(escapeMarkdownText));
-  const actualOrganizations = organizationOrder.filter((name, index, names) => names.indexOf(name) === index && renderedOrganizations.has(name));
   const expectedOrganizations = sortOrganizations(records).map(([name]) => escapeMarkdownText(name));
-  if (actualOrganizations.some((name, index) => name !== expectedOrganizations[index])) errors.push('organizations are not sorted by highest priority, latest date, and name');
+  const navigationOrganizationOrder = navigationLinks.map((link) => link.label);
+  const organizationBlockOrder = organizationHeadings.map((heading) => heading.label);
+  if (navigationOrganizationOrder.length !== expectedOrganizations.length || navigationOrganizationOrder.some((name, index) => name !== expectedOrganizations[index])) errors.push('organization navigation order does not match the body');
+  if (organizationBlockOrder.length !== navigationOrganizationOrder.length || organizationBlockOrder.some((name, index) => name !== navigationOrganizationOrder[index])) errors.push('organization block order does not match navigation order');
+  if (organizationBlockOrder.length !== expectedOrganizations.length || organizationBlockOrder.some((name, index) => name !== expectedOrganizations[index])) errors.push('organizations are not sorted by highest priority, latest date, and name');
   return { errors, records };
 }
 

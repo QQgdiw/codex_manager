@@ -100,6 +100,19 @@ test('allows lightweight exclusions only when they explain the decision', () => 
   assert.match(result.errors.join('\n'), /unexplained: decisionReason is required/);
 });
 
+test('rejects duplicate topics and unpaired UTF-16 surrogates in curation records', () => {
+  const result = validateCurationRecords([
+    validRecord({ id: 'duplicate-topics', mergeKey: 'duplicate-topics', topics: ['coding-agent', 'coding-agent'] }),
+    validRecord({ id: 'unsafe-organization', mergeKey: 'unsafe-organization', organization: `Unsafe\uD800` }),
+    validRecord({ id: 'replacement-organization', mergeKey: 'replacement-organization', organization: `Unsafe\uFFFD` }),
+  ], coverage);
+
+  const errors = result.errors.join('\n');
+  assert.match(errors, /duplicate-topics: duplicate topic: coding-agent/);
+  assert.match(errors, /unsafe-organization: organization contains an unpaired UTF-16 surrogate/);
+  assert.ok(result.kept.some((record) => record.id === 'replacement-organization'));
+});
+
 test('renders topic indexes, grouped records, and deterministic organization ordering', () => {
   const markdown = renderEventMarket([
     validRecord({ id: 'z-low', organization: 'Zeta', date: '2026-01-02', priority: 'low', mergeKey: 'z-low', topics: ['embedded-edge'] }),
@@ -109,7 +122,22 @@ test('renders topic indexes, grouped records, and deterministic organization ord
   ], { ...coverage, verifiedAt: '2026-07-18' });
 
   assert.match(markdown, /## 主题索引/);
-  assert.match(markdown, /\[编码智能体\]\(#topic-coding-agent\)/);
+  assert.match(markdown, /同一事件可进入多个主题，计数为索引引用数，不等于唯一事件数/);
+  assert.match(markdown, /\[编码智能体（2）\]\(#topic-coding-agent\)/);
+  assert.match(markdown, /\*\*工程文档（1）\*\*/);
+  assert.match(markdown, /本期工程文档方向仅有 1 项通过官方来源与工程价值复核，未用泛文档 AI 新闻补数。/);
+  const topicOrder = ['机器人与 ROS', '嵌入式与边缘计算', 'EDA、FPGA 与芯片', '工程文档', '编码智能体', '扩展安全'];
+  assert.deepEqual(
+    [...markdown.matchAll(/^- \[(.+?)（\d+）\]\(#topic-[^)]+\)$/gm)].map((match) => match[1]),
+    topicOrder,
+  );
+  assert.match(markdown, /## 组织导航\n\n- \[Beta\]\(#organization-[^)]+\)\n- \[Alpha\]\(#organization-[^)]+\)\n- \[Zeta\]\(#organization-[^)]+\)/);
+  assert.match(markdown, /组织按最高优先级、最新事件日期、组织名排序；组内按日期倒序/);
+  for (const organization of ['Beta', 'Alpha', 'Zeta']) {
+    const target = new RegExp(`\\[${organization}\\]\\(#(organization-[^)]+)\\)`).exec(markdown)?.[1];
+    assert.ok(target, `missing navigation target for ${organization}`);
+    assert.match(markdown, new RegExp(`<a id="${target}"></a>\\n## ${organization}`));
+  }
   assert.match(markdown, /<!-- event-record:\{"id":"a-medium","date":"2026-01-03","organization":"Alpha"\} -->/);
   assert.ok(markdown.indexOf('## Beta') < markdown.indexOf('## Alpha'));
   assert.ok(markdown.indexOf('## Alpha') < markdown.indexOf('## Zeta'));
@@ -117,6 +145,138 @@ test('renders topic indexes, grouped records, and deterministic organization ord
   assert.ok(markdown.indexOf('### Codex workflow update') < markdown.indexOf('### Codex workflow update', markdown.indexOf('### Codex workflow update') + 1));
   assert.match(markdown, /#### 客观事实[\s\S]*#### 技术剖析[\s\S]*#### 工作流影响[\s\S]*#### 局限与风险[\s\S]*#### 后续关注/);
   assert.match(markdown, /https:\/\/example\.com\/official/);
+});
+
+test('rejects incorrect topic counts, forged organization navigation, and missing sparse coverage notice', () => {
+  const valid = renderEventMarket([
+    validRecord({ id: 'multi-topic', organization: 'Alpha', mergeKey: 'multi-topic', topics: ['robotics-ros', 'engineering-docs'] }),
+    validRecord({ id: 'second-org', organization: 'Beta', mergeKey: 'second-org', topics: ['embedded-edge'] }),
+  ], { ...coverage, verifiedAt: '2026-07-18' });
+  assert.deepEqual(validateEventDocument(valid, coverage).errors, []);
+
+  const badCount = valid.replace('**机器人与 ROS（1）**', '**机器人与 ROS（2）**');
+  assert.match(validateEventDocument(badCount, coverage).errors.join('\n'), /topic robotics-ros count does not match index references/);
+
+  const alphaTarget = /\[Alpha\]\(#(organization-[^)]+)\)/.exec(valid)[1];
+  const betaEntry = /^- \[Beta\]\(#organization-[^)]+\)\n/m.exec(valid)?.[0];
+  assert.ok(betaEntry);
+  const forged = valid
+    .replace(`](#${alphaTarget})`, '](#bogus)')
+    .replace(`<a id="${alphaTarget}"></a>`, `<a id="bogus"></a>\n<a id="${alphaTarget}"></a>`);
+  assert.match(validateEventDocument(forged, coverage).errors.join('\n'), /organization navigation link bogus does not target its body organization anchor/);
+
+  const missing = valid.replace(betaEntry, '');
+  assert.match(validateEventDocument(missing, coverage).errors.join('\n'), /organization navigation is missing Beta/);
+
+  const duplicated = valid.replace(/(- \[Alpha\]\(#[^)]+\)\n)/, '$1$1');
+  assert.match(validateEventDocument(duplicated, coverage).errors.join('\n'), /duplicate organization navigation entry: Alpha/);
+
+  const noNotice = valid.replace('本期工程文档方向仅有 1 项通过官方来源与工程价值复核，未用泛文档 AI 新闻补数。\n', '');
+  assert.match(validateEventDocument(noNotice, coverage).errors.join('\n'), /missing engineering-docs sparse coverage notice/);
+  const wrongNoticeCount = valid.replace('本期工程文档方向仅有 1 项', '本期工程文档方向仅有 0 项');
+  assert.match(validateEventDocument(wrongNoticeCount, coverage).errors.join('\n'), /engineering-docs sparse coverage notice count does not match index references/);
+
+  const noMultiTopicNotice = valid.replace('同一事件可进入多个主题，计数为索引引用数，不等于唯一事件数。\n', '');
+  assert.match(validateEventDocument(noMultiTopicNotice, coverage).errors.join('\n'), /missing multi-topic reference count notice/);
+  const noSortRule = valid.replace('组织按最高优先级、最新事件日期、组织名排序；组内按日期倒序，再按事件 ID 排序。\n', '');
+  assert.match(validateEventDocument(noSortRule, coverage).errors.join('\n'), /missing organization archive sorting rule/);
+
+  const roboticsSection = /<a id="topic-robotics-ros"><\/a>[\s\S]*?(?=\n<a id="topic-embedded-edge")/.exec(valid)[0];
+  const embeddedSection = /<a id="topic-embedded-edge"><\/a>[\s\S]*?(?=\n<a id="topic-eda-fpga-chip")/.exec(valid)[0];
+  const wrongOrder = valid.replace(`${roboticsSection}\n${embeddedSection}`, `${embeddedSection}\n${roboticsSection}`);
+  assert.match(validateEventDocument(wrongOrder, coverage).errors.join('\n'), /topics are not in the required user-role order/);
+  const wrongTopicNavigationOrder = valid.replace(
+    '- [机器人与 ROS（1）](#topic-robotics-ros)\n- [嵌入式与边缘计算（1）](#topic-embedded-edge)',
+    '- [嵌入式与边缘计算（1）](#topic-embedded-edge)\n- [机器人与 ROS（1）](#topic-robotics-ros)',
+  );
+  assert.match(validateEventDocument(wrongTopicNavigationOrder, coverage).errors.join('\n'), /topic navigation entries are not in the required user-role order/);
+
+  const organizationNavigation = /^- \[Alpha\]\(#[^)]+\)\n- \[Beta\]\(#[^)]+\)$/m.exec(valid)[0];
+  const [alphaNavigation, betaNavigation] = organizationNavigation.split('\n');
+  const wrongOrganizationNavigationOrder = valid.replace(organizationNavigation, `${betaNavigation}\n${alphaNavigation}`);
+  assert.match(validateEventDocument(wrongOrganizationNavigationOrder, coverage).errors.join('\n'), /organization navigation order does not match the body/);
+
+  const compressedOrganizationNavigation = valid.replace(organizationNavigation, `${alphaNavigation} · ${betaNavigation.slice(2)}`);
+  assert.match(validateEventDocument(compressedOrganizationNavigation, coverage).errors.join('\n'), /organization navigation must use one bullet per organization/);
+
+  const zeroEngineeringDocs = renderEventMarket([
+    validRecord({ topics: ['coding-agent'] }),
+  ], { ...coverage, verifiedAt: '2026-07-18' });
+  assert.match(zeroEngineeringDocs, /本期工程文档方向仅有 0 项通过官方来源与工程价值复核/);
+  assert.deepEqual(validateEventDocument(zeroEngineeringDocs, coverage).errors, []);
+});
+
+test('binds each body topic list exactly to its topic index memberships', () => {
+  const valid = renderEventMarket([
+    validRecord({ id: 'topic-contract', organization: 'Alpha', mergeKey: 'topic-contract', topics: ['robotics-ros', 'engineering-docs'] }),
+  ], { ...coverage, verifiedAt: '2026-07-18' });
+  const eventLink = '- [2026-01-01｜Codex workflow update｜Alpha](#event-topic-contract)';
+
+  const extraIndexTopic = valid
+    .replace('[编码智能体（0）](#topic-coding-agent)', '[编码智能体（1）](#topic-coding-agent)')
+    .replace('**编码智能体（0）**\n- 暂无通过复核的事件。', `**编码智能体（1）**\n${eventLink}`);
+  assert.match(validateEventDocument(extraIndexTopic, coverage).errors.join('\n'), /topic-contract: body topics do not match indexed topics/);
+
+  const missingIndexTopic = valid
+    .replace('[工程文档（1）](#topic-engineering-docs)', '[工程文档（0）](#topic-engineering-docs)')
+    .replace(`**工程文档（1）**\n${eventLink}\n本期工程文档方向仅有 1 项`, '**工程文档（0）**\n- 暂无通过复核的事件。\n本期工程文档方向仅有 0 项');
+  assert.match(validateEventDocument(missingIndexTopic, coverage).errors.join('\n'), /topic-contract: body topics do not match indexed topics/);
+
+  const unknownBodyTopic = valid.replace('- 主题：机器人与 ROS、工程文档', '- 主题：机器人与 ROS、未知主题');
+  assert.match(validateEventDocument(unknownBodyTopic, coverage).errors.join('\n'), /topic-contract: body topics do not match indexed topics/);
+
+  const duplicateBodyTopic = valid.replace('- 主题：机器人与 ROS、工程文档', '- 主题：机器人与 ROS、机器人与 ROS');
+  assert.match(validateEventDocument(duplicateBodyTopic, coverage).errors.join('\n'), /topic-contract: body topics do not match indexed topics/);
+});
+
+test('treats topic labels containing the Chinese list delimiter as atomic display names', () => {
+  const single = renderEventMarket([
+    validRecord({ id: 'eda-only', mergeKey: 'eda-only', topics: ['eda-fpga-chip'] }),
+  ], { ...coverage, verifiedAt: '2026-07-18' });
+  assert.match(single, /- 主题：EDA、FPGA 与芯片/);
+  assert.deepEqual(validateEventDocument(single, coverage).errors, []);
+
+  const combined = renderEventMarket([
+    validRecord({ id: 'eda-combined', mergeKey: 'eda-combined', topics: ['coding-agent', 'eda-fpga-chip'] }),
+  ], { ...coverage, verifiedAt: '2026-07-18' });
+  assert.match(combined, /- 主题：EDA、FPGA 与芯片、编码智能体/);
+  assert.deepEqual(validateEventDocument(combined, coverage).errors, []);
+});
+
+test('strictly binds organization anchors, headings, markers, and navigation order', () => {
+  const valid = renderEventMarket([
+    validRecord({ id: 'alpha-event', organization: 'Alpha', mergeKey: 'alpha-event' }),
+    validRecord({ id: 'beta-event', organization: 'Beta', priority: 'medium', mergeKey: 'beta-event' }),
+  ], { ...coverage, verifiedAt: '2026-07-18' });
+  const firstOrganizationAnchor = valid.indexOf('<a id="organization-');
+
+  const placeholder = `${valid.slice(0, firstOrganizationAnchor)}## Placeholder\n\n${valid.slice(firstOrganizationAnchor)}`;
+  assert.match(validateEventDocument(placeholder, coverage).errors.join('\n'), /organization heading Placeholder is not bound to a unique navigation entry and anchor/);
+
+  const duplicateHeading = `${valid.slice(0, firstOrganizationAnchor)}## Alpha\n\n${valid.slice(firstOrganizationAnchor)}`;
+  assert.match(validateEventDocument(duplicateHeading, coverage).errors.join('\n'), /duplicate organization heading: Alpha/);
+
+  const alphaStart = valid.indexOf('<a id="organization-', firstOrganizationAnchor);
+  const betaStart = valid.indexOf('<a id="organization-', alphaStart + 1);
+  const reorderedBlocks = `${valid.slice(0, alphaStart)}${valid.slice(betaStart)}${valid.slice(alphaStart, betaStart)}`;
+  assert.match(validateEventDocument(reorderedBlocks, coverage).errors.join('\n'), /organization block order does not match navigation order/);
+
+  const mismatchedMarker = valid.replace(
+    '<!-- event-record:{"id":"alpha-event","date":"2026-01-01","organization":"Alpha"} -->',
+    '<!-- event-record:{"id":"alpha-event","date":"2026-01-01","organization":"Beta"} -->',
+  );
+  assert.match(validateEventDocument(mismatchedMarker, coverage).errors.join('\n'), /alpha-event: marker organization does not match its organization block/);
+});
+
+test('rejects a sparse engineering-docs notice when the topic has more than one reference', () => {
+  const valid = renderEventMarket([
+    validRecord({ id: 'docs-one', mergeKey: 'docs-one', topics: ['engineering-docs'] }),
+    validRecord({ id: 'docs-two', date: '2026-01-02', mergeKey: 'docs-two', topics: ['engineering-docs'] }),
+  ], { ...coverage, verifiedAt: '2026-07-18' });
+  assert.doesNotMatch(valid, /本期工程文档方向仅有/);
+
+  const staleNotice = valid.replace('**工程文档（2）**', '**工程文档（2）**\n本期工程文档方向仅有 2 项通过官方来源与工程价值复核，未用泛文档 AI 新闻补数。');
+  assert.match(validateEventDocument(staleNotice, coverage).errors.join('\n'), /engineering-docs sparse coverage notice is forbidden when count exceeds 1/);
 });
 
 test('validates document markers, ordering, and rejects unmarked human event headings', () => {
